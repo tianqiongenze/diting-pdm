@@ -1,0 +1,227 @@
+// Diting PdM · 核心契约 v0.1
+// 说明：本文件是跨语言契约的唯一来源（Rust/Go/Java/Python 共同生成）。
+// 修改规则：只增不改不删；破坏性变更必须升 package 版本并双版本并行。
+
+syntax = "proto3";
+
+package pdm.v1;
+
+option go_package = "github.com/yadea/pdm/gen/go/pdm/v1;pdmv1";
+option java_package = "com.yadea.pdm.contract.v1";
+option java_multiple_files = true;
+
+// ---------------------------------------------------------------------------
+// 通用
+// ---------------------------------------------------------------------------
+message TenantContext {
+  string tenant_id = 1;      // site-a / supplier-t1-001
+  string tenant_type = 2;    // GROUP / SITE / SUPPLIER
+  string region = 3;         // CN / OVERSEAS，决定数据主权策略
+  string trace_id = 4;
+}
+
+enum HealthLevel {
+  HEALTH_LEVEL_UNSPECIFIED = 0;
+  HEALTH_LEVEL_GREEN = 1;
+  HEALTH_LEVEL_YELLOW = 2;
+  HEALTH_LEVEL_ORANGE = 3;
+  HEALTH_LEVEL_RED = 4;
+}
+
+message TimeWindow {
+  int64 start_ms = 1;        // UTC epoch millis
+  int64 end_ms = 2;
+}
+
+// ---------------------------------------------------------------------------
+// 资产
+// ---------------------------------------------------------------------------
+message Asset {
+  string tenant_id = 1;
+  string asset_id = 2;
+  string name = 3;
+  string category = 4;       // MOTOR / PUMP / FAN / PRESS / ROBOT / AGV
+  string criticality = 5;    // A / B / C
+  string node_id = 6;
+}
+
+message MeasurementPoint {
+  string tenant_id = 1;
+  string mp_id = 2;          // site.area.asset.component.point.quantity
+  string asset_id = 3;
+  string quantity = 4;       // vib_acc / vib_vel / temp / current / speed
+  string unit = 5;
+  int32 sample_rate = 6;
+}
+
+// ---------------------------------------------------------------------------
+// 监测（DA / DM）
+// ---------------------------------------------------------------------------
+message Waveform {
+  string tenant_id = 1;
+  string mp_id = 2;
+  int64 ts_start_ms = 3;
+  int32 sample_rate = 4;
+  repeated float samples = 5 [packed = true];
+  string trigger = 6;        // scheduled / threshold / manual
+  int32 quality = 7;         // 0-100
+  string unit = 8;
+}
+
+message FeatureFrame {
+  string tenant_id = 1;
+  string mp_id = 2;
+  int64 ts_ms = 3;
+  double rms = 4;
+  double peak = 5;
+  double kurtosis = 6;
+  double skewness = 7;
+  double crest_factor = 8;
+  int32 quality = 9;
+  string feature_version = 10;
+}
+
+// ---------------------------------------------------------------------------
+// 诊断（SD / HA）
+// ---------------------------------------------------------------------------
+message Dimension {
+  string name = 1;           // vib / imp / temp / curr / trend
+  double s = 2;              // 0..1 归一化劣化度
+  double weight = 3;
+  double impact = 4;
+  string evidence = 5;
+}
+
+message Hypothesis {
+  string code = 1;           // BEARING_BPFO
+  string label = 2;
+  double confidence = 3;
+  string basis = 4;
+}
+
+message Diagnosis {
+  string tenant_id = 1;
+  string diag_id = 2;
+  string asset_id = 3;
+  TimeWindow window = 4;
+  double hi = 5;
+  HealthLevel level = 6;
+  int32 sla_hours = 7;
+  bool degraded = 8;
+  string degraded_reason = 9;
+  repeated Dimension contributions = 10;
+  repeated Hypothesis hypotheses = 11;
+  string model_version = 12;
+  string evidence_root_hash = 13;   // 证据链根哈希，审计用
+  int64 created_at_ms = 14;
+}
+
+// ---------------------------------------------------------------------------
+// 预后（PA）
+// ---------------------------------------------------------------------------
+message RulEstimate {
+  string tenant_id = 1;
+  string asset_id = 2;
+  double p10_days = 3;
+  double p50_days = 4;
+  double p90_days = 5;
+  double confidence = 6;
+  bool regime_valid = 7;
+  string ood_warning = 8;
+  repeated string assumptions = 9;   // 不得为空（docs/04 §6.4）
+}
+
+// ---------------------------------------------------------------------------
+// 决策（AG）
+// ---------------------------------------------------------------------------
+message CostBreakdown {
+  double spare = 1;
+  double labor = 2;
+  double downtime = 3;
+  double total = 4;
+  string currency = 5;       // CNY
+}
+
+message MaintenanceOption {
+  string option_id = 1;
+  int64 window_start_ms = 2;
+  int64 window_end_ms = 3;
+  double downtime_hours = 4;
+  string production_impact = 5;      // LOW / MEDIUM / HIGH
+  bool spare_ready = 6;
+  repeated string crew = 7;
+  CostBreakdown cost = 8;
+  string risk = 9;
+}
+
+message RecommendationCard {
+  string tenant_id = 1;
+  string card_id = 2;
+  string diag_id = 3;
+  string asset_id = 4;
+  repeated MaintenanceOption options = 5;
+  double avoided_loss = 6;
+  double total_cost = 7;
+  double net_benefit = 8;
+  repeated string conflicts = 9;
+  string status = 10;        // PENDING / CONFIRMED / REJECTED / EXPIRED / CONVERTED
+  repeated string required_roles = 11;
+  int64 confirm_deadline_ms = 12;
+  string workorder_no = 13;
+  string disclaimer = 14;
+}
+
+// ---------------------------------------------------------------------------
+// 命令与事件（gRPC 服务）
+// ---------------------------------------------------------------------------
+service DiagnosisService {
+  rpc Diagnose(DiagnoseRequest) returns (Diagnosis);
+  rpc GetDiagnosis(GetDiagnosisRequest) returns (Diagnosis);
+}
+
+message DiagnoseRequest {
+  TenantContext ctx = 1;
+  string asset_id = 2;
+  TimeWindow window = 3;
+  FeatureFrame features = 4;
+  Waveform waveform = 5;
+  bool allow_degraded = 6;
+}
+
+message GetDiagnosisRequest {
+  TenantContext ctx = 1;
+  string diag_id = 2;
+}
+
+service DecisionService {
+  rpc CreateCard(CreateCardRequest) returns (RecommendationCard);
+  rpc ConfirmCard(ConfirmCardRequest) returns (RecommendationCard);
+}
+
+message CreateCardRequest {
+  TenantContext ctx = 1;
+  string diag_id = 2;
+  RulEstimate rul = 3;
+  repeated MaintenanceOption candidate_options = 4;
+}
+
+message ConfirmCardRequest {
+  TenantContext ctx = 1;
+  string card_id = 2;
+  string confirm_token = 3;  // 一次性令牌，由审批流签发
+  string actor = 4;
+}
+
+// 领域事件信封（与 CloudEvents 对齐，字段语义见 docs/15 §4.3）
+message DomainEvent {
+  string specversion = 1;    // "1.0"
+  string id = 2;
+  string type = 3;           // com.yadea.pdm.decision.cardCreated.v1
+  string source = 4;
+  string subject = 5;
+  int64 time_ms = 6;
+  string tenant_id = 7;
+  string trace_id = 8;
+  string causation_id = 9;
+  bytes data = 10;           // 序列化后的具体事件体
+}

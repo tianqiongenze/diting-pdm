@@ -1,0 +1,349 @@
+# =============================================================================
+# TiDB 集群：StatefulSet + 静态本地 PV（离线环境最佳方案）
+#
+# 背景（ADR-018）：
+#   - 原实现是 3 个独立 Deployment，无稳定身份，Pod 重建后 PD 中残留 store
+#   - 原 PVC 为 local-path 10Gi，不可扩容
+#   - 服务器无外网，无法拉取 TiDB Operator 镜像 → 采用手工 StatefulSet
+#   - TiKV 的正确扩容方式是"横向加副本 + 加 PV"，不是扩 PVC（Raft 分片自动再平衡）
+#
+# 存储规划（worker1 /home 3.0T，可用 2.3T）：
+#   tikv-0/1/2  200Gi ×3 = 600Gi
+#   pd-0/1/2     20Gi ×3 =  60Gi
+#   tiflash-0   100Gi    = 100Gi
+#   合计 760Gi，保留约 1.5T 余量
+# =============================================================================
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: pdm-local-ssd
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pdm-tikv-0
+  labels: {component: tikv, ordinal: "0"}
+spec:
+  capacity: {storage: 200Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pdm-local-ssd
+  local: {path: /home/k8s-data/pdm-ssd/tikv-0}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [k8s-worker1]}
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pdm-tikv-1
+  labels: {component: tikv, ordinal: "1"}
+spec:
+  capacity: {storage: 200Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pdm-local-ssd
+  local: {path: /home/k8s-data/pdm-ssd/tikv-1}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [k8s-worker1]}
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pdm-tikv-2
+  labels: {component: tikv, ordinal: "2"}
+spec:
+  capacity: {storage: 200Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pdm-local-ssd
+  local: {path: /home/k8s-data/pdm-ssd/tikv-2}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [k8s-worker1]}
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pdm-pd-0
+  labels: {component: pd, ordinal: "0"}
+spec:
+  capacity: {storage: 20Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pdm-local-ssd
+  local: {path: /home/k8s-data/pdm-ssd/pd-0}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [k8s-worker1]}
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pdm-pd-1
+  labels: {component: pd, ordinal: "1"}
+spec:
+  capacity: {storage: 20Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pdm-local-ssd
+  local: {path: /home/k8s-data/pdm-ssd/pd-1}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [k8s-worker1]}
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pdm-pd-2
+  labels: {component: pd, ordinal: "2"}
+spec:
+  capacity: {storage: 20Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pdm-local-ssd
+  local: {path: /home/k8s-data/pdm-ssd/pd-2}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [k8s-worker1]}
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pdm-tiflash-0
+  labels: {component: tiflash, ordinal: "0"}
+spec:
+  capacity: {storage: 100Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pdm-local-ssd
+  local: {path: /home/k8s-data/pdm-ssd/tiflash-0}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [k8s-worker1]}
+
+---
+# 稳定网络标识：publishNotReadyAddresses 保证启动期也能互相解析（Raft 组建必需）
+apiVersion: v1
+kind: Service
+metadata:
+  name: pd-peer
+  namespace: infra
+  labels: {app: pd}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: {app: pd}
+  ports:
+    - {name: peer, port: 2380, targetPort: 2380}
+    - {name: client, port: 2379, targetPort: 2379}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tikv-peer
+  namespace: infra
+  labels: {app: tikv}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: {app: tikv}
+  ports:
+    - {name: client, port: 20160, targetPort: 20160}
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pd
+  namespace: infra
+spec:
+  serviceName: pd-peer
+  replicas: 3
+  podManagementPolicy: Parallel
+  updateStrategy: {type: RollingUpdate}
+  selector: {matchLabels: {app: pd}}
+  template:
+    metadata:
+      labels: {app: pd}
+    spec:
+      priorityClassName: pdm-data-critical
+      terminationGracePeriodSeconds: 300
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - {key: kubernetes.io/hostname, operator: In, values: [k8s-worker1]}
+      containers:
+        - name: pd
+          image: pingcap/pd:v8.5.8-x86v1
+          imagePullPolicy: IfNotPresent
+          command: ["/pd-server"]
+          args:
+            - --name=$(POD_NAME)
+            - --data-dir=/data
+            - --client-urls=http://0.0.0.0:2379
+            - --advertise-client-urls=http://$(POD_NAME).pd-peer.infra.svc.cluster.local:2379
+            - --peer-urls=http://0.0.0.0:2380
+            - --advertise-peer-urls=http://$(POD_NAME).pd-peer.infra.svc.cluster.local:2380
+            - --initial-cluster=pd-0=http://pd-0.pd-peer.infra.svc.cluster.local:2380,pd-1=http://pd-1.pd-peer.infra.svc.cluster.local:2380,pd-2=http://pd-2.pd-peer.infra.svc.cluster.local:2380
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+          ports:
+            - {name: client, containerPort: 2379}
+            - {name: peer, containerPort: 2380}
+          resources:
+            requests: {cpu: 200m, memory: 512Mi}
+            limits: {cpu: "1", memory: 2Gi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: pdm-local-ssd
+        resources: {requests: {storage: 20Gi}}
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tikv
+  namespace: infra
+spec:
+  serviceName: tikv-peer
+  replicas: 3
+  podManagementPolicy: Parallel
+  updateStrategy: {type: RollingUpdate}
+  selector: {matchLabels: {app: tikv}}
+  template:
+    metadata:
+      labels: {app: tikv}
+    spec:
+      priorityClassName: pdm-data-critical
+      terminationGracePeriodSeconds: 300
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - {key: kubernetes.io/hostname, operator: In, values: [k8s-worker1]}
+      containers:
+        - name: tikv
+          image: pingcap/tikv:v8.5.8-x86v1
+          imagePullPolicy: IfNotPresent
+          command: ["/tikv-server"]
+          args:
+            - --addr=0.0.0.0:20160
+            - --advertise-addr=$(POD_NAME).tikv-peer.infra.svc.cluster.local:20160
+            - --status-addr=0.0.0.0:20180
+            - --data-dir=/data
+            - --pd=pd-0.pd-peer.infra.svc.cluster.local:2379,pd-1.pd-peer.infra.svc.cluster.local:2379,pd-2.pd-peer.infra.svc.cluster.local:2379
+            - --config=/etc/tikv/tikv.toml
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+          ports:
+            - {name: client, containerPort: 20160}
+            - {name: status, containerPort: 20180}
+          resources:
+            requests: {cpu: 1, memory: 2Gi}
+            limits: {cpu: 6, memory: 8Gi}
+          readinessProbe:
+            tcpSocket: {port: 20160}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: config, mountPath: /etc/tikv}
+      volumes:
+        - name: config
+          configMap: {name: tikv-config}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: pdm-local-ssd
+        resources: {requests: {storage: 200Gi}}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tidb-server
+  namespace: infra
+  labels: {app: tidb}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: tidb}}
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  template:
+    metadata:
+      labels: {app: tidb}
+    spec:
+      priorityClassName: pdm-data-critical
+      terminationGracePeriodSeconds: 120
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector: {matchLabels: {app: tidb}}
+      containers:
+        - name: tidb
+          image: pingcap/tidb:v8.5.8-x86v1
+          imagePullPolicy: IfNotPresent
+          command: ["/tidb-server"]
+          args:
+            - --store=tikv
+            - --path=pd-0.pd-peer.infra.svc.cluster.local:2379,pd-1.pd-peer.infra.svc.cluster.local:2379,pd-2.pd-peer.infra.svc.cluster.local:2379
+            - --advertise-address=$(POD_IP)
+            - --status=10080
+            - --log-slow-query=/tmp/slow.log
+          env:
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+          ports:
+            - {name: mysql, containerPort: 4000}
+            - {name: status, containerPort: 10080}
+          resources:
+            requests: {cpu: 1, memory: 2Gi}
+            limits: {cpu: 8, memory: 8Gi}
+          readinessProbe:
+            httpGet: {path: /status, port: 10080}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: {port: 4000}
+            initialDelaySeconds: 60
+            periodSeconds: 20

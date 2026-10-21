@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1.7
+# 离线构建版：服务器无外网，依赖以 wheel 形式随上下文提供
+#   docker build -t <registry>/pdm/python-diagnosis:0.1.0 -f services/python-diagnosis/Dockerfile.offline .
+FROM python:3.11-slim AS deps
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /build
+COPY wheels/ /wheels/
+COPY services/python-diagnosis/requirements.txt .
+# 关键：--no-index 强制离线，杜绝构建期访问 PyPI
+RUN pip install --no-index --find-links=/wheels --prefix=/install -r requirements.txt
+
+FROM python:3.11-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app:/app/_pdm_signal
+WORKDIR /app
+
+RUN groupadd -g 10001 pdm && useradd -u 10001 -g pdm -s /sbin/nologin pdm
+
+COPY --from=deps /install /usr/local
+COPY services/python-diagnosis/app ./app
+COPY packages/pdm_signal ./_pdm_signal
+
+USER 10001
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=2).status==200 else 1)"
+
+CMD ["granian", "--interface", "asgi", "app.server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--log-level", "warning"]

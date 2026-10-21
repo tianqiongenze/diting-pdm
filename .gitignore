@@ -1,0 +1,48 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# --- 构建/依赖 ---
+wheels/
+node_modules/
+dist/
+build/
+
+# --- 数据与模型（绝不入库）---
+*.csv
+*.parquet
+*.h5
+*.ckpt
+*.pt
+*.onnx
+datasets/
+
+# --- 密钥与凭据（绝不入库）---
+*.pem
+*.key
+*.p12
+.env
+.env.*
+**/secrets*.yaml
+kubeconfig*
+*kubeconfig
+
+# --- IDE / 系统 ---
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
+
+# --- 临时 ---
+*.log
+*.tmp
+/tmp/

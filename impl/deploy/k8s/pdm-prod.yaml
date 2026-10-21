@@ -1,0 +1,309 @@
+# =============================================================================
+# Diting PdM · pdm-prod 部署清单（v0.1 垂直切片）
+# 目标集群：10.167.2.175/176（K8s v1.28.2，Rancher 管理）
+#
+# 设计要点（见 docs/16 §4.2）：
+#   - 独立命名空间 + 配额，避免污染教学/实验业务
+#   - NetworkPolicy 默认拒绝，显式放行 infra / ai-platform / monitoring
+#   - 数据密集组件调度到 k8s-worker1（资源更宽裕）
+#   - 使用已有 ingress-nginx（NodePort 32231/32232），不新建入口
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pdm-prod
+  labels:
+    name: pdm-prod
+    app.kubernetes.io/part-of: diting-pdm
+    # 注意：集群 Istio 已装但注入普遍关闭，此处保持关闭以免影响存量服务
+    istio-injection: disabled
+
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: pdm-quota
+  namespace: pdm-prod
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 60Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    pods: "80"
+    persistentvolumeclaims: "10"
+    services.loadbalancers: "0"
+
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: pdm-limits
+  namespace: pdm-prod
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 256Mi
+      max:
+        cpu: "8"
+        memory: 16Gi
+
+---
+# 默认拒绝所有入站，再按需放行（最小权限）
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: pdm-prod
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-ingress-controller
+  namespace: pdm-prod
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-monitoring
+  namespace: pdm-prod
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8000
+
+---
+# 出站：仅允许到 infra / ai-platform 与 DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-backends
+  namespace: pdm-prod
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: infra
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ai-platform
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-diagnosis
+  namespace: pdm-prod
+  labels:
+    app: python-diagnosis
+    version: "0.1.0"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: python-diagnosis
+  template:
+    metadata:
+      labels:
+        app: python-diagnosis
+        version: "0.1.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      # 数据/计算密集服务优先落 worker1
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: ["k8s-worker1"]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: api
+          image: registry.local/pdm/python-diagnosis:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: PDM_ENV
+              value: prod
+            - name: PDM_LOG_LEVEL
+              value: INFO
+            # L2 缓存（复用 infra/redis）；不可用时服务自动降级为 L1-only
+            - name: PDM_REDIS_URL
+              value: redis://redis.infra.svc.cluster.local:6379/3
+            # TiDB（D23）：密码走 Secret，不落 ConfigMap
+            - name: PDM_TIDB_HOST
+              value: tidb.infra.svc.cluster.local
+            - name: PDM_TIDB_PORT
+              value: "4000"
+            - name: PDM_TIDB_USER
+              value: pdm_diag
+            - name: PDM_TIDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pdm-tidb
+                  key: password
+                  optional: true
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: python-diagnosis
+  namespace: pdm-prod
+  labels:
+    app: python-diagnosis
+spec:
+  type: ClusterIP
+  selector:
+    app: python-diagnosis
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: python-diagnosis-pdb
+  namespace: pdm-prod
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: python-diagnosis
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: python-diagnosis-hpa
+  namespace: pdm-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: python-diagnosis
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: python-diagnosis
+  namespace: pdm-prod
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+    # dify-catchall（无 host，"/" Prefix）会吞掉所有未匹配路径，
+    # 因此 PdM 必须用足够长的专属前缀保证最长匹配胜出
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: pdm-api.10.167.2.175.nip.io
+      http:
+        paths:
+          - path: /pdm-api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: python-diagnosis
+                port:
+                  number: 8000

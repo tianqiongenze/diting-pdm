@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>谛听 Diting v1.0 · 方案评分与优化总览</title>
+<style>
+:root{--bg:#f6f7f9;--pn:#fff;--ink:#1a1d21;--ink2:#4a5158;--ink3:#8b939c;--ln:#e3e6ea;--ln2:#eef0f3;
+--blue:#0f5c8c;--blueL:#e8f1f7;--teal:#0d7a6b;--tealL:#e6f4f1;--amber:#b45309;--amberL:#fdf3e7;
+--red:#b42318;--redL:#fdecea;--pur:#5b3fa8;--purL:#f0ecfb;--mono:ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.7}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--ln)}
+nav .wrap{display:flex;align-items:center;gap:24px;height:56px}
+.brand{font-weight:700;font-size:15px;color:var(--blue)}
+.brand span{color:var(--ink3);font-weight:400;font-size:12px;margin-left:8px}
+nav a{color:var(--ink2);text-decoration:none;font-size:13px}
+nav a:hover{color:var(--blue)}
+.sp{flex:1}
+.ver{font-size:11px;font-family:var(--mono);color:var(--ink3);border:1px solid var(--ln);padding:3px 9px;border-radius:20px}
+header{padding:64px 0 48px;background:radial-gradient(900px 360px at 10% -10%,#e9f2f8 0,transparent 60%),radial-gradient(700px 300px at 90% 0,#e8f4f1 0,transparent 62%);border-bottom:1px solid var(--ln)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:2px;color:var(--blue);margin-bottom:16px}
+h1{font-size:38px;line-height:1.28;letter-spacing:-.5px}
+h1 em{font-style:normal;color:var(--red)}
+.lede{margin-top:16px;font-size:16px;color:var(--ink2);max-width:800px}
+.score{display:flex;gap:18px;align-items:center;margin-top:32px;flex-wrap:wrap}
+.big{background:var(--pn);border:1px solid var(--ln);border-radius:12px;padding:18px 26px;text-align:center;min-width:150px}
+.big .n{font-size:38px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+.big .l{font-size:12px;color:var(--ink3);margin-top:6px}
+.big.old .n{color:var(--red)}
+.big.new .n{color:var(--teal)}
+.arrow{font-size:26px;color:var(--ink3)}
+section{padding:56px 0;border-bottom:1px solid var(--ln)}
+.sec-h{display:flex;align-items:baseline;gap:14px;margin-bottom:6px}
+.sec-n{font-family:var(--mono);font-size:12px;color:var(--ink3)}
+h2{font-size:23px}
+.sec-d{color:var(--ink2);font-size:14px;margin-bottom:28px;max-width:840px}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+.card{background:var(--pn);border:1px solid var(--ln);border-radius:12px;padding:20px 22px}
+.card h3{font-size:14.5px;margin-bottom:8px}
+.card p,.card li{font-size:13px;color:var(--ink2)}
+.card ul{margin:8px 0 0 18px}
+.card li{margin:3px 0}
+table{width:100%;border-collapse:collapse;background:var(--pn);border:1px solid var(--ln);border-radius:10px;overflow:hidden;font-size:12.5px}
+th{background:#f9fafb;text-align:left;padding:10px 12px;font-size:11.5px;color:var(--ink2);border-bottom:1px solid var(--ln)}
+td{padding:9px 12px;border-bottom:1px solid var(--ln2);color:var(--ink2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td b{color:var(--ink)}
+code{font-family:var(--mono);font-size:11.5px;background:#f2f4f6;padding:1px 5px;border-radius:3px;color:#0b4f75}
+.tag{display:inline-block;font-size:10.5px;font-family:var(--mono);padding:2px 7px;border-radius:4px}
+.tb{background:var(--blueL);color:var(--blue)}.tt{background:var(--tealL);color:var(--teal)}
+.ta{background:var(--amberL);color:var(--amber)}.tr{background:var(--redL);color:var(--red)}
+.tp{background:var(--purL);color:var(--pur)}
+.bar{height:6px;background:#eef0f3;border-radius:3px;overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--blue);border-radius:3px}
+.bar.r i{background:var(--red)}
+footer{padding:32px 0 56px;color:var(--ink3);font-size:12px}
+@media(max-width:900px){h1{font-size:28px}.g2,.g3{grid-template-columns:1fr}nav a{display:none}}
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+<div class="brand">谛听 DITING<span>v1.0 评分与优化</span></div><div class="sp"></div>
+<a href="#score">评分</a><a href="#defect">缺陷</a><a href="#arch">新架构</a><a href="#infra">基础设施</a><a href="#lang">多语言</a>
+<span class="ver">2026-10-21</span>
+</div></nav>
+
+<header><div class="wrap">
+<div class="eyebrow">SELF-ASSESSMENT &amp; OPTIMIZATION · v0.1 → v1.0</div>
+<h1>v0.1 是<em>单厂的好方案</em>，<br>但撑不起 20 个基地</h1>
+<p class="lede">雅迪场景把三个假设全部打破：单租户、网络可靠、单一读侧。本页给出评分、结构性缺陷、以及基于<strong>实盘集群盘点</strong>的优化结论。</p>
+<div class="score">
+<div class="big old"><div class="n">0.71</div><div class="l">v0.1 自评（单厂）</div></div>
+<div class="arrow">→</div>
+<div class="big new"><div class="n">0.91</div><div class="l">v1.0 目标（集团化）</div></div>
+<div class="big"><div class="n">28</div><div class="l">交付文件</div></div>
+<div class="big"><div class="n">22</div><div class="l">待拍板决策点</div></div>
+</div>
+</div></header>
+
+<section id="score"><div class="wrap">
+<div class="sec-h"><span class="sec-n">01</span><h2>十维评分</h2></div>
+<p class="sec-d">扣分制：发现一个结构性缺口扣 0.1~0.3，没有功劳分。最大失分项是"组织与场景适配"（0.55）。</p>
+<div class="grid g2">
+<div class="card">
+<h3>v0.1 各维度得分</h3>
+<div style="margin-top:12px;font-size:12.5px;color:var(--ink2)">
+<div>需求完整性 0.68<div class="bar r"><i style="width:68%"></i></div></div>
+<div style="margin-top:8px">架构合理性 0.66<div class="bar r"><i style="width:66%"></i></div></div>
+<div style="margin-top:8px">数据与模型 0.70<div class="bar r"><i style="width:70%"></i></div></div>
+<div style="margin-top:8px">智能体 AI 工程 0.80<div class="bar"><i style="width:80%"></i></div></div>
+<div style="margin-top:8px">安全合规 0.68<div class="bar r"><i style="width:68%"></i></div></div>
+<div style="margin-top:8px">测试质量 0.72<div class="bar r"><i style="width:72%"></i></div></div>
+<div style="margin-top:8px">交付工程化 0.68<div class="bar r"><i style="width:68%"></i></div></div>
+<div style="margin-top:8px">组织场景适配 0.55<div class="bar r"><i style="width:55%"></i></div></div>
+<div style="margin-top:8px">标准符合 0.72<div class="bar r"><i style="width:72%"></i></div></div>
+<div style="margin-top:8px">可执行性 0.70<div class="bar r"><i style="width:70%"></i></div></div>
+</div>
+</div>
+<div class="card">
+<h3>最该看的三个数字</h3>
+<ul>
+<li><b>0.55</b> 组织场景适配：v0.1 完全没考虑集团、基地、供应商</li>
+<li><b>0.66</b> 架构合理性：无事件驱动、无 CQRS、无 DDD、无 GraphQL</li>
+<li><b>0.80</b> 智能体工程：Harness 部分是唯一可直接复用的资产</li>
+</ul>
+<p style="margin-top:10px">逐份文档评分与致命缺口见 <code>docs/13</code> §2.2。</p>
+</div>
+</div>
+</div></section>
+
+<section id="defect"><div class="wrap">
+<div class="sec-h"><span class="sec-n">02</span><h2>三个结构性缺陷（不是补丁，是换地基）</h2></div>
+<div class="grid g3">
+<div class="card" style="border-left:3px solid var(--red)">
+<h3><span class="tag tr">A</span> 假设了单厂</h3>
+<p>真实是 20 基地 + 供应商，跨省跨国、网络参差、要能独立生存。</p>
+<p style="margin-top:6px"><b>解法：</b>多租户 + 联邦部署 + 数据主权分级。</p>
+</div>
+<div class="card" style="border-left:3px solid var(--amber)">
+<h3><span class="tag ta">B</span> 假设读写同库</h3>
+<p>真实是高频写 + 跨基地重查询，一套库必然互相拖垮。</p>
+<p style="margin-top:6px"><b>解法：</b>CQRS 分离，写侧时序/对象，读侧 PG + TiFlash。</p>
+</div>
+<div class="card" style="border-left:3px solid var(--pur)">
+<h3><span class="tag tp">C</span> 假设单一语言</h3>
+<p>协议解析要 Rust，事件管线要 Go，企业集成要 Java，AI 要 Python。</p>
+<p style="margin-top:6px"><b>解法：</b>按部署边界分工，统一门禁。</p>
+</div>
+</div>
+</div></section>
+
+<section id="arch"><div class="wrap">
+<div class="sec-h"><span class="sec-n">03</span><h2>v1.0 目标架构</h2></div>
+<p class="sec-d">八个限界上下文，事件优先，读写分离，GraphQL 聚合前端，边缘自治。</p>
+<div class="card" style="padding:22px">
+<pre style="font-family:var(--mono);font-size:11.5px;line-height:1.65;color:var(--ink2);overflow-x:auto">
+体验层 Web / 移动 / 对话 / 大屏
+   │  GraphQL（一次拉多域）
+   ▼
+BFF 聚合层（Go）  DataLoader 防 N+1 · 租户上下文 · 字段级权限
+   │
+   ├────────────── 命令侧 ──────────────┐        ┌──────── 查询侧 ────────┐
+   ▼                                    │        │                        ▼
+资产(Java) 监测(Rust) 诊断(Py) 预后(Py)  │  事件  │  投影器(Go) → 读模型
+决策(Py)  知识(Java) 运营(Go) 智能体(Py) │──Pulsar──▶  PG / TiFlash / Redis
+   │                                    │        │  Nebula / Milvus
+   ▼                                    │        └────────────────────────┘
+写模型：TDengine(时序) · PG16(事务) · MinIO(波形) · Nebula(图谱)
+   ▲
+   │ 特征值 + 事件（受控上行）
+边缘层 ×20 基地：Rust 采集/DSP · 本地诊断 · 72h 缓存 · 断网自治
+</pre>
+</div>
+</div></section>
+
+<section id="infra"><div class="wrap">
+<div class="sec-h"><span class="sec-n">04</span><h2>集群实盘盘点（10.167.2.175 / .176）</h2></div>
+<p class="sec-d">不是推测，是 2026-10-21 的实际查询结果。结论直接改写 D14 / D15。</p>
+<table>
+<thead><tr><th style="width:22%">项</th><th style="width:44%">实盘结果</th><th>判断</th></tr></thead>
+<tbody>
+<tr><td><b>集群</b></td><td>K8s v1.28.2，master 16C/126Gi + worker1 64C/126Gi，docker 26.1.4，CentOS 7</td><td>可用，实际 CPU 仅 2–10%</td></tr>
+<tr><td><b>管理面</b></td><td>Rancher + Fleet + Istio（注入关闭）</td><td>Fleet 正好管 20 基地边缘</td></tr>
+<tr><td><b>事件总线</b></td><td>Pulsar 已在跑（2 bookie + ZK）</td><td><span class="tag tt">复用</span> 不建 Kafka</td></tr>
+<tr><td><b>分析库</b></td><td>TiDB v8.5.8 + TiFlash 已在跑</td><td><span class="tag ta">有条件复用</span> 见下</td></tr>
+<tr><td><b>向量 / 图</b></td><td>Milvus + NebulaGraph 已在跑</td><td><span class="tag tt">复用</span></td></tr>
+<tr><td><b>LLM</b></td><td>LiteLLM + Ollama 已在跑</td><td><span class="tag tt">复用</span></td></tr>
+<tr><td><b>可观测</b></td><td>Prometheus + Grafana + Loki 已在跑</td><td><span class="tag tt">复用</span> 不自建</td></tr>
+<tr><td><b>时序库</b></td><td>无 TDengine / InfluxDB</td><td><span class="tag tr">必须新建</span></td></tr>
+<tr><td><b>关系库</b></td><td>PG 15.12 仅存在于 dify-plus（Dify 自用）</td><td><span class="tag ta">不建议混用</span></td></tr>
+</tbody></table>
+
+<div class="grid g2" style="margin-top:18px">
+<div class="card" style="border-left:3px solid var(--red)">
+<h3>⚠ TiDB 当前不稳定的证据</h3>
+<ul>
+<li>tikv-2 重启 <b>88 次</b>，tikv-1 重启 <b>34 次</b></li>
+<li>Last State: Terminated，<b>Exit Code 137</b>（SIGKILL / 典型 OOM）</li>
+<li>TiKV 3×10Gi，TiFlash 10Gi，local-path <b>不支持扩容</b></li>
+</ul>
+<p style="margin-top:8px"><b>结论：</b>可做分析与读模型，<b>不可做生产主库</b>，除非先调资源并扩容。</p>
+</div>
+<div class="card" style="border-left:3px solid var(--teal)">
+<h3>存储三分法（ADR-017）</h3>
+<ul>
+<li><b>TDengine</b>：时序特征值（必须新建）</li>
+<li><b>PG16</b>：事务域 + 多租户 RLS（新建专用实例）</li>
+<li><b>TiDB + TiFlash</b>：跨基地对标读模型（复用）</li>
+</ul>
+<p style="margin-top:8px"><b>为什么不全塞 TiDB：</b>无 RLS、容量仅 30Gi、OOM 历史。</p>
+</div>
+</div>
+</div></section>
+
+<section id="lang"><div class="wrap">
+<div class="sec-h"><span class="sec-n">05</span><h2>多语言职责矩阵</h2></div>
+<table>
+<thead><tr><th style="width:14%">语言</th><th style="width:30%">承担域</th><th style="width:36%">具体职责</th><th>选型理由</th></tr></thead>
+<tbody>
+<tr><td><b>Rust</b></td><td>监测（边缘）</td><td>协议解析、DSP 核（FFT/包络）、波形编解码</td><td>无 GC、内存可控、24×7 长稳</td></tr>
+<tr><td><b>Go</b></td><td>运营 + 基础设施</td><td>事件管线、GraphQL BFF、告警路由、审计链、投影器</td><td>高并发 I/O、单文件部署</td></tr>
+<tr><td><b>Java</b></td><td>资产 + 知识 + 集成</td><td>组织树权限、EAM/ERP 适配、规则引擎、判据库</td><td>企业中间件生态、Nacos 契合</td></tr>
+<tr><td><b>Python</b></td><td>诊断/预后/决策/智能体</td><td>特征工程、HI/RUL、Harness、MCP、报告</td><td>AI 生态不可替代</td></tr>
+</tbody></table>
+<div class="card" style="margin-top:16px;background:#fffdf8;border-color:#f0e0c8">
+<h3>铁律</h3>
+<p>语言按<b>部署边界</b>划分，不按目录；跨语言一律走 gRPC/Pulsar，禁止 FFI 直连；门禁统一（覆盖率 80%/核心 90%），不允许"Python 严、Rust 松"。</p>
+</div>
+</div></section>
+
+<footer><div class="wrap">
+谛听 Diting v1.0 ｜ 依据 docs/13–17 ｜ 2026-10-21 ｜ 待确认 D1–D22 与 C1–C8 后进入 Ph1
+</div></footer>
+</body>
+</html>
