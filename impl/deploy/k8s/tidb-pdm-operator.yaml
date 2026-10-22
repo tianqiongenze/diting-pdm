@@ -1,0 +1,92 @@
+---
+# TiDB Operator 受管集群（infra 命名空间，复用原有 local PV）
+#
+# 迁移方式：原地停机重建 + BR 恢复
+#   - 旧手工 StatefulSet 已删除，7 个 PV 保持 Retain 数据但已解绑（Available）
+#   - 本 CR 由 Operator 创建同名规格 PVC（pdm-pd-0..2 / pdm-tikv-0..2 / pdm-tiflash-0）
+#     绑定到这些 PV，随后用 BR 从 MinIO 恢复数据
+#
+# 关键配置说明：
+#   1. 镜像用 v8.5.8-dns（原镜像 /bin/sh→dash 不支持 operator 启动脚本的 pipefail）
+#   2. 反亲和放宽为 preferred：7 个 PV 全部在 k8s-worker1，required 会导致无法调度
+#   3. 资源与旧集群对齐（PD 200m / TiKV 1C / TiDB 1C），停机后容量已释放
+apiVersion: pingcap.com/v1alpha1
+kind: TidbCluster
+metadata:
+  name: pdm
+  namespace: infra
+spec:
+  version: v8.5.8-dns
+  timezone: Asia/Shanghai
+  pvReclaimPolicy: Retain
+  configUpdateStrategy: RollingUpdate
+
+  helper:
+    image: 10.167.2.175:30500/base/pingcap/busybox:1.36
+
+  pd:
+    baseImage: 10.167.2.175:30500/pdm/pd
+    replicas: 3
+    requests:
+      cpu: 200m
+      storage: "20Gi"
+    storageClassName: pdm-local-ssd
+    config: |
+      [log]
+      level = "info"
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/component
+                    operator: In
+                    values: ["pd"]
+              topologyKey: kubernetes.io/hostname
+
+  tikv:
+    baseImage: 10.167.2.175:30500/pdm/tikv
+    replicas: 3
+    requests:
+      cpu: "1"
+      storage: "200Gi"
+    storageClassName: pdm-local-ssd
+    config: |
+      [log]
+      level = "info"
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/component
+                    operator: In
+                    values: ["tikv"]
+              topologyKey: kubernetes.io/hostname
+
+  tidb:
+    baseImage: 10.167.2.175:30500/pdm/tidb
+    replicas: 2
+    requests:
+      cpu: "1"
+    service:
+      type: NodePort
+      externalTrafficPolicy: Local
+      port: 4000
+      exposeStatus: true
+    config: |
+      [log]
+      level = "info"
+
+  tiflash:
+    baseImage: 10.167.2.175:30500/pdm/tiflash
+    replicas: 1
+    storageClaims:
+      - resources:
+          requests:
+            storage: "100Gi"
+        storageClassName: pdm-local-ssd
