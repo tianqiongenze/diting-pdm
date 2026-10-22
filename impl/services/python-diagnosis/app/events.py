@@ -56,27 +56,89 @@ class NullTransport:
         return None
 
 
+class PulsarTransport:
+    """Pulsar 二进制协议实现（生产推荐）。
+
+    为什么走二进制协议而不是 REST producer：
+    2026-10-22 定位发现，集群 Pulsar 以 `bin/pulsar broker` 启动（读 broker.conf），
+    而 `webSocketServiceEnabled=true` 只写在 standalone.conf 里 —— broker 模式不会
+    启动 WebSocket 服务，因此 `/ws/v2/producer` 404 且 8000 端口未监听。
+    二进制协议 6650 端口正常监听，且是官方推荐的集成方式（吞吐高、支持分区键）。
+
+    topic: persistent/pdm/<tenant>/diagnosis.events   （命名空间需已创建）
+    """
+
+    def __init__(self, url: str, tenant_map: dict[str, str] | None = None) -> None:
+        import pulsar  # 延迟导入：未装时不影响其他传输层
+
+        self._pulsar = pulsar
+        self._tenant_map = tenant_map or {}
+        self._producers: dict[str, Any] = {}
+        self._client = pulsar.Client(url)
+
+    def _producer(self, tenant_id: str):
+        topic = f"persistent://pdm/{tenant_id}/diagnosis-events"
+        if topic not in self._producers:
+            self._producers[topic] = self._client.create_producer(topic)
+        return self._producers[topic]
+
+    def publish(self, tenant_id: str, event: dict[str, Any]) -> str | None:
+        body = json.dumps(event, ensure_ascii=False).encode()
+        p = self._producer(tenant_id)
+        mid = p.send(body)  # 同步发送：确认落盘后再返回
+        return str(mid)
+
+    def close(self) -> None:
+        try:
+            for p in self._producers.values():
+                p.close()
+            self._client.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 _transport: Transport = NullTransport()
 _lock = threading.Lock()
 stats = {"emitted": 0, "failures": 0, "last_error": None}
 
 
 def init(url: str | None = None) -> bool:
-    """初始化传输层。失败时降级为 NullTransport，不影响服务启动。"""
+    """初始化传输层。优先级：pulsar > redis > null。
+
+    失败时逐级降级，保证服务可用性优先于事件送达。
+    """
     global _transport
+    mode = os.getenv("PDM_EVENT_TRANSPORT", "pulsar").lower()
+
+    if mode == "pulsar":
+        try:
+            _transport = PulsarTransport(os.getenv("PDM_PULSAR_URL", "pulsar://pulsar-broker.infra.svc.cluster.local:6650"))
+            stats["last_error"] = None
+            return True
+        except Exception as exc:  # noqa: BLE001
+            stats["last_error"] = f"pulsar init failed, falling back to redis: {exc}"
+
     url = url or os.getenv("PDM_REDIS_URL")
-    if not url:
-        return False
-    try:
-        _transport = RedisStreamTransport(url)
-        return True
-    except Exception as exc:  # noqa: BLE001
-        stats["last_error"] = f"init failed: {exc}"
-        return False
+    if url:
+        try:
+            _transport = RedisStreamTransport(url)
+            stats["last_error"] = None
+            return True
+        except Exception as exc:  # noqa: BLE001
+            stats["last_error"] = f"init failed: {exc}"
+    return False
 
 
 def enabled() -> bool:
     return not isinstance(_transport, NullTransport)
+
+
+def transport_name() -> str:
+    if isinstance(_transport, PulsarTransport):
+        return "pulsar"
+    if isinstance(_transport, RedisStreamTransport):
+        return "redis"
+    return "none"
 
 
 def emit(
@@ -115,4 +177,4 @@ def emit(
 
 
 def stats_snapshot() -> dict[str, Any]:
-    return {"enabled": enabled(), **stats}
+    return {"enabled": enabled(), "transport": transport_name(), **stats}

@@ -304,6 +304,60 @@ class E2E:
         check("T9.4 读模型已投影", n_health > 0, f"{n_health} rows")
         check("T9.5 幂等表有记录", n_proc > 0, f"{n_proc} processed")
 
+
+    # ---------------- T10 Pulsar 事件总线 ----------------
+    def t10_pulsar(self) -> None:
+        tenant = self.sample_asset["tenant_id"]
+        h = {"X-Tenant-Id": tenant}
+        stats = self.client.get("/events/stats").json()
+        check("T10.1 传输层为 Pulsar", stats.get("transport") == "pulsar", str(stats.get("transport")))
+        self.client.post("/v1/diagnose", json=self.last_payload, headers=h)
+        out = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "root@10.167.2.175",
+             "kubectl -n infra exec pulsar-broker-0 -- curl -s "
+             "http://localhost:8080/admin/v2/persistent/pdm/%s/diagnosis-events/partitioned-stats" % tenant],
+            capture_output=True, text=True, timeout=40)
+        try:
+            d = json.loads(out.stdout)
+            n = int(d.get("msgInCounter", 0))
+        except Exception:
+            n = -1
+        check("T10.2 Pulsar 收到消息", n > 0, f"msgInCounter={n}")
+
+    # ---------------- T11 方案卡工单闭环 ----------------
+    def t11_card_lifecycle(self) -> None:
+        tenant = self.sample_asset["tenant_id"]
+        h = {"X-Tenant-Id": tenant}
+        r = self.client.post("/v1/consult", json={"tenant_id": tenant, "asset_id": self.sample_asset["asset_id"]}, headers=h)
+        check("T11.1 会诊成功", r.status_code == 200)
+        if r.status_code != 200:
+            return
+        card = r.json()["card"]
+        cid = card["card_id"]
+        required = card["human_confirm"]["required_roles"]
+        check("T11.2 卡片声明了需确认角色", len(required) >= 1, str(required))
+
+        # 按卡片实际要求的角色逐个确认，最后一个才应变 CONFIRMED
+        for i, role in enumerate(required):
+            rr = self.client.post(f"/v1/cards/{cid}/confirm",
+                                  json={"role": role, "user_id": f"tester-{i}", "decision": "confirm"}, headers=h)
+            expect = "CONFIRMED" if i == len(required) - 1 else "PENDING"
+            check(f"T11.3.{i} 确认 {role} → {expect}", rr.json().get("status") == expect, str(rr.json()))
+
+        r3 = self.client.post(f"/v1/cards/{cid}/confirm",
+                              json={"role": "maintenance_supervisor", "user_id": "tester2", "decision": "confirm"}, headers=h)
+        check("T11.4 重复确认返回 409", r3.status_code == 409, f"HTTP {r3.status_code}")
+        check("T11.4b 不存在的卡片返回 409", self.client.post("/v1/cards/NOPE-999/confirm",
+              json={"role": "maintenance_supervisor", "user_id": "t", "decision": "confirm"}, headers=h).status_code == 409)
+
+        r4 = self.client.get("/v1/cards?limit=10", headers=h)
+        check("T11.5 卡片列表可查", r4.json().get("count", 0) > 0)
+
+    # ---------------- T12 看板 ----------------
+    def t12_dashboard(self) -> None:
+        r = self.client.get("/dashboard")
+        check("T12.1 看板可访问", r.status_code == 200 and "谛听" in r.text, f"HTTP {r.status_code}")
+
     # ---------------- 主入口 ----------------
     def run_all(self) -> bool:
         import redis as redis_sync  # noqa: F401
@@ -318,6 +372,9 @@ class E2E:
         self.t7_consult()
         self.t8_mcp()
         self.t9_events()
+        self.t10_pulsar()
+        self.t11_card_lifecycle()
+        self.t12_dashboard()
         print(f"\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
         if FAIL:
             print("失败项:", ", ".join(FAIL))

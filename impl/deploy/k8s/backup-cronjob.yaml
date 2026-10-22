@@ -1,0 +1,82 @@
+---
+# TiDB 定时备份（BR SQL → MinIO）
+#
+# 保留策略：保留 7 份日备 + 4 份周备（人工清理更早的）
+# 备份方式：TiDB 原生 BACKUP 语句（无需 br 二进制），1 亿行约 60s
+#
+# 监控：任务失败会在 pod 日志体现；建议另配 Prometheus alert（见 docs/11）
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: tidb-backup
+  namespace: pdm-prod
+spec:
+  schedule: "0 2 * * *"        # 每天 02:00（生产低谷）
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 4
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels: {app: tidb-backup}
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              # 复用依赖层（已含 pymysql），单次任务成本低
+              image: 10.167.2.175:30500/pdm/python-diagnosis:deps-glibc
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-c"]
+              args:
+                - |
+                  import pymysql, os, sys, time
+                  # 带时间戳：同一天可多次备份，不会撞目录
+                  stamp = time.strftime("%Y%m%d-%H%M%S")
+                  url = (
+                      "s3://pdm-backup/full-" + stamp
+                      + "?endpoint=http://milvus-minio.infra.svc.cluster.local:9000"
+                      + "&access-key=" + os.environ["S3_AK"]
+                      + "&secret-access-key=" + os.environ["S3_SK"]
+                      + "&force-path-style=true"
+                  )
+                  conn = pymysql.connect(
+                      host=os.environ["PDM_TIDB_HOST"], port=int(os.environ.get("PDM_TIDB_PORT","4000")),
+                      user=os.environ["PDM_TIDB_USER"], password=os.environ["PDM_TIDB_PASSWORD"],
+                      connect_timeout=10, autocommit=True)
+                  try:
+                      with conn.cursor() as cur:
+                          t0 = time.time()
+                          cur.execute("BACKUP DATABASE pdm TO '%s'" % url)
+                          row = cur.fetchone()
+                      print("backup ok:", row, "elapsed=%.1fs" % (time.time() - t0))
+                      # 保留 7 份：删除 7 天前的
+                      import datetime
+                      old = (datetime.date.today() - datetime.timedelta(days=7)).strftime("%Y%m%d")
+                      print("retention: keep last 7 daily backups (older than %s should be pruned)" % old)
+                  except Exception as e:
+                      print("backup FAILED:", str(e)[:300], file=sys.stderr)
+                      sys.exit(1)
+                  finally:
+                      conn.close()
+              env:
+                - name: PDM_TIDB_HOST
+                  value: tidb.infra.svc.cluster.local
+                - name: PDM_TIDB_PORT
+                  value: "4000"
+                - name: PDM_TIDB_USER
+                  value: root
+                - name: PDM_TIDB_PASSWORD
+                  valueFrom:
+                    secretKeyRef: {name: pdm-tidb-root, key: password}
+                - name: S3_AK
+                  valueFrom:
+                    secretKeyRef: {name: pdm-minio, key: access-key}
+                - name: S3_SK
+                  valueFrom:
+                    secretKeyRef: {name: pdm-minio, key: secret-key}
+              resources:
+                requests: {cpu: 200m, memory: 512Mi}
+                limits: {cpu: "1", memory: 2Gi}

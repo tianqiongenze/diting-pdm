@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from typing import Any, Iterator
+import datetime
 
 import pymysql
 from pymysql.cursors import DictCursor
@@ -228,6 +229,106 @@ def get_snapshot(tenant_id: str, asset_id: str) -> dict[str, Any] | None:
             asset_id,
         )
         .fetchone()
+    )
+
+
+def save_recommendation_card(tenant_id: str, card: dict[str, Any]) -> str:
+    """落库方案卡（recommendation_card）。返回 card_id。"""
+    import json
+
+    card_id = card["card_id"]
+    options = card.get("options") or []
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT IGNORE INTO recommendation_card(tenant_id, card_id, asset_id, diag_id, conclusion, "
+            "confidence, options, economics, conflicts, verdict, risk_level, required_roles, status) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                tenant_id, card_id, card["asset_id"], card.get("diag_id"),
+                card["diagnosis"]["conclusion"], card["diagnosis"]["confidence"],
+                json.dumps(options, ensure_ascii=False),
+                json.dumps(card["economics"], ensure_ascii=False),
+                json.dumps(card.get("conflicts", []), ensure_ascii=False),
+                card.get("verdict", "MONITOR"), card.get("risk_level", "中"),
+                json.dumps(card["human_confirm"]["required_roles"], ensure_ascii=False),
+                card["human_confirm"]["status"],
+            ),
+        )
+    return card_id
+
+
+def get_recommendation_card(tenant_id: str, card_id: str) -> dict[str, Any] | None:
+    rows = (
+        TenantQueryBuilder(tenant_id)
+        .query(
+            "SELECT * FROM recommendation_card WHERE tenant_id=%s AND card_id=%s",
+            card_id,
+        )
+        .fetchall()
+    )
+    return rows[0] if rows else None
+
+
+def confirm_recommendation_card(tenant_id: str, card_id: str, role: str,
+                                user_id: str, decision: str, comment: str = "") -> dict[str, Any]:
+    """人工确认方案卡。决策为 confirm 时若齐备 required_roles 则状态转为 CONFIRMED。"""
+    import json
+
+    card = get_recommendation_card(tenant_id, card_id)
+    if card is None:
+        raise ValueError(f"card not found: {card_id}")
+    if card["status"] in ("CONFIRMED", "REJECTED"):
+        raise ValueError(f"card already finalized: {card['status']}")
+
+    required = card.get("required_roles") or []
+    if isinstance(required, str):
+        required = json.loads(required)
+
+    import uuid
+
+    with connect() as conn, conn.cursor() as cur:
+        # 该表有多列 NOT NULL 无默认（actor/action/token_hash/expires_at），必须显式给值
+        cur.execute(
+            "INSERT INTO card_confirmation(confirm_id, tenant_id, card_id, role, actor, user_id, "
+            "decision, comment, action, token_hash, expires_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                uuid.uuid4().hex, tenant_id, card_id, role, user_id, user_id, decision, comment,
+                decision, uuid.uuid4().hex, datetime.datetime.now() + datetime.timedelta(hours=72),
+            ),
+        )
+        if decision == "reject":
+            cur.execute(
+                "UPDATE recommendation_card SET status='REJECTED' WHERE tenant_id=%s AND card_id=%s",
+                (tenant_id, card_id),
+            )
+            return {"card_id": card_id, "status": "REJECTED", "confirmed_by": [user_id]}
+
+        cur.execute(
+            "SELECT role FROM card_confirmation WHERE tenant_id=%s AND card_id=%s AND decision='confirm'",
+            (tenant_id, card_id),
+        )
+        confirmed = {r["role"] for r in cur.fetchall()}
+        missing = [r for r in required if r not in confirmed]
+        if not missing:
+            cur.execute(
+                "UPDATE recommendation_card SET status='CONFIRMED' WHERE tenant_id=%s AND card_id=%s",
+                (tenant_id, card_id),
+            )
+            return {"card_id": card_id, "status": "CONFIRMED", "confirmed_by": sorted(confirmed)}
+        return {"card_id": card_id, "status": "PENDING", "confirmed_by": sorted(confirmed), "missing": missing}
+
+
+def list_pending_cards(tenant_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    return (
+        TenantQueryBuilder(tenant_id)
+        .query(
+            "SELECT card_id, asset_id, conclusion, verdict, risk_level, status, created_at "
+            "FROM recommendation_card WHERE tenant_id=%s AND status IN ('PENDING','CONFIRMED') "
+            "ORDER BY created_at DESC LIMIT %s",
+            limit,
+        )
+        .fetchall()
     )
 
 

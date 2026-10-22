@@ -21,8 +21,9 @@ from typing import Any
 
 import msgspec
 from litestar import Litestar, Request, get, post
+from litestar.response import Response
 from litestar.exceptions import HTTPException
-from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN, HTTP_422_UNPROCESSABLE_ENTITY
+from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN, HTTP_409_CONFLICT, HTTP_422_UNPROCESSABLE_ENTITY
 
 from . import decision, domain, events, repository
 from .cache import MultiLevelCache, build_l2
@@ -49,6 +50,19 @@ async def version() -> dict[str, str]:
 @get("/cache/stats")
 async def cache_stats() -> dict[str, Any]:
     return cache.stats()
+
+
+@get("/dashboard")
+async def dashboard() -> Any:
+    """健康看板（静态页，由 ConfigMap 挂载到 /app/static/dashboard.html）。"""
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "dashboard.html")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            return Response(content=fh.read(), media_type="text/html; charset=utf-8")
+    return Response(
+        content="<h3>dashboard not mounted</h3><p>ConfigMap pdm-dashboard 未挂载</p>",
+        media_type="text/html; charset=utf-8",
+    )
 
 
 @get("/events/stats")
@@ -122,6 +136,13 @@ async def consult_endpoint(request: Request) -> dict[str, Any]:
             tenant, asset_id, diag, snap, opinions, evaluation, spare, crew, plan,
             downtime_cost_per_hour=float(payload.get("downtime_cost_per_hour", 6000.0)),
         )
+        # 方案卡落库 + 工单闭环起点（同步段，随后统一在 async 侧执行）
+        if os.getenv("PDM_DB_ENABLED", "1") == "1":
+            try:
+                repository.save_recommendation_card(tenant, card)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[warn] card persist failed: {exc}", flush=True)
+
         events.emit(
             "com.yadea.pdm.decision.cardCreated.v1",
             tenant,
@@ -143,6 +164,43 @@ async def consult_endpoint(request: Request) -> dict[str, Any]:
         }}
 
     return await asyncio.to_thread(_run)
+
+
+@post("/v1/cards/{card_id:str}/confirm", status_code=200)
+async def confirm_card(request: Request) -> dict[str, Any]:
+    """人工确认/驳回方案卡。齐备 required_roles 后状态自动转 CONFIRMED。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    payload = await request.json()
+    role = str(payload.get("role", ""))
+    user_id = str(payload.get("user_id", ""))
+    decision = str(payload.get("decision", "confirm"))
+    if not role or not user_id:
+        raise HTTPException(status_code=HTTP_422_UNPROCESSABLE_ENTITY, detail="role and user_id required")
+    if decision not in ("confirm", "reject"):
+        raise HTTPException(status_code=HTTP_422_UNPROCESSABLE_ENTITY, detail="decision must be confirm|reject")
+
+    card_id = request.path_params["card_id"]
+
+    def _run() -> dict[str, Any]:
+        return repository.confirm_recommendation_card(
+            tenant, card_id, role, user_id, decision, str(payload.get("comment", ""))
+        )
+
+    try:
+        return await asyncio.to_thread(_run)
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@get("/v1/cards")
+async def list_cards(request: Request, limit: int = 50) -> dict[str, Any]:
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    rows = await asyncio.to_thread(repository.list_pending_cards, tenant, limit)
+    return {"tenant_id": tenant, "count": len(rows), "cards": rows}
 
 
 @post("/mcp", status_code=200)
@@ -283,7 +341,7 @@ async def _on_startup() -> None:
     events.init(os.getenv("PDM_REDIS_URL"))
 
 app = Litestar(
-    route_handlers=[healthz, version, cache_stats, events_stats, warmup_endpoint, diagnose_endpoint, consult_endpoint, mcp_endpoint],
+    route_handlers=[healthz, version, cache_stats, events_stats, warmup_endpoint, diagnose_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard],
     on_startup=[_on_startup],
     debug=os.getenv("PDM_ENV", "prod") != "prod",
 )

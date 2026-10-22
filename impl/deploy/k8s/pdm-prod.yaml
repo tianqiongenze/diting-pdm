@@ -228,9 +228,15 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: dashboard
+              mountPath: /app/static
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: dashboard
+          configMap:
+            name: pdm-dashboard
 
 ---
 apiVersion: v1
@@ -307,3 +313,227 @@ spec:
                 name: python-diagnosis
                 port:
                   number: 8000
+
+---
+# 看板静态页（ConfigMap 挂载，避免额外镜像）
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pdm-dashboard
+  namespace: pdm-prod
+data:
+  dashboard.html: |
+        <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>谛听 PdM · 设备健康看板</title>
+    <style>
+      :root{
+        --bg:#f5f7fa; --card:#fff; --line:#e3e8ef; --txt:#1a2233; --sub:#5b6779;
+        --green:#16a34a; --yellow:#eab308; --orange:#f97316; --red:#dc2626; --accent:#2563eb;
+      }
+      *{box-sizing:border-box}
+      body{margin:0;font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--txt)}
+      header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+      header h1{font-size:17px;margin:0}
+      .tag{font-size:12px;color:var(--sub);border:1px solid var(--line);border-radius:4px;padding:2px 8px}
+      .sp{flex:1}
+      button{font:inherit;padding:6px 14px;border:1px solid var(--line);background:var(--card);border-radius:6px;cursor:pointer}
+      button:hover{border-color:var(--accent);color:var(--accent)}
+      button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+      main{padding:22px;max-width:1280px;margin:0 auto}
+      .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:18px}
+      .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+      .kpi .l{font-size:12px;color:var(--sub)}
+      .kpi .v{font-size:24px;font-weight:600;margin-top:4px}
+      .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+      .panel h2{font-size:14px;margin:0 0 12px}
+      table{width:100%;border-collapse:collapse;font-size:13px}
+      th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+      th{color:var(--sub);font-weight:500;font-size:12px}
+      tr:hover td{background:#fafbfd}
+      .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;color:#fff}
+      .pill.green{background:var(--green)} .pill.yellow{background:var(--yellow)}
+      .pill.orange{background:var(--orange)} .pill.red{background:var(--red)}
+      .pill.gray{background:#94a3b8}
+      input,select{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:#fff}
+      .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;min-width:70px}
+      .bar>i{display:block;height:100%}
+      #log{white-space:pre-wrap;font:12px/1.6 ui-monospace,Consolas,monospace;background:#0f172a;color:#cbd5e1;padding:12px;border-radius:8px;max-height:220px;overflow:auto}
+      .muted{color:var(--sub);font-size:12px}
+    </style>
+    </head>
+    <body>
+    <header>
+      <h1>谛听 PdM · 设备健康看板</h1>
+      <span class="tag" id="ver">…</span>
+      <span class="tag" id="transport">…</span>
+      <div class="sp"></div>
+      <input id="tenant" value="site-a" placeholder="租户" style="width:90px">
+      <input id="asset" placeholder="设备位号 如 FAN-00004" style="width:170px">
+      <button class="primary" onclick="diagnose()">诊断</button>
+      <button onclick="consult()">会诊</button>
+      <button onclick="refresh()">刷新</button>
+      <button onclick="warmup()">预热</button>
+    </header>
+
+    <main>
+      <div class="cards">
+        <div class="kpi"><div class="l">关注设备</div><div class="v" id="k-assets">-</div></div>
+        <div class="kpi"><div class="l">红色</div><div class="v" style="color:var(--red)" id="k-red">-</div></div>
+        <div class="kpi"><div class="l">橙色</div><div class="v" style="color:var(--orange)" id="k-orange">-</div></div>
+        <div class="kpi"><div class="l">黄色</div><div class="v" style="color:var(--yellow)" id="k-yellow">-</div></div>
+        <div class="kpi"><div class="l">待确认方案卡</div><div class="v" style="color:var(--accent)" id="k-cards">-</div></div>
+        <div class="kpi"><div class="l">事件传输</div><div class="v" id="k-transport" style="font-size:16px">-</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>热点设备 <span class="muted" id="hot-note"></span></h2>
+        <table>
+          <thead><tr><th>设备</th><th>名称</th><th>关键度</th><th>振动 RMS</th><th>HI</th><th>健康度</th><th>等级</th><th>操作</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>方案卡（工单闭环）</h2>
+        <table>
+          <thead><tr><th>卡片编号</th><th>设备</th><th>结论</th><th>判定</th><th>风险</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="cards"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>诊断结果</h2>
+        <div id="result" class="muted">选择设备后点击「诊断」。</div>
+      </div>
+
+      <div class="panel">
+        <h2>操作日志</h2>
+        <div id="log"></div>
+      </div>
+    </main>
+
+    <script>
+    const BASE = location.pathname.replace(/\/dashboard\/?$/, '') || '';
+    const $ = id => document.getElementById(id);
+    const log = (m) => { $('log').textContent += m + '\n'; $('log').scrollTop = 1e9; };
+
+    function hdr(extra={}) {
+      return Object.assign({'Content-Type':'application/json', 'X-Tenant-Id': $('tenant').value || 'site-a'}, extra);
+    }
+    async function api(path, opts={}) {
+      const r = await fetch(BASE + path, Object.assign({headers: hdr()}, opts));
+      const t = await r.text();
+      try { return JSON.parse(t); } catch { return {_raw:t, _status:r.status}; }
+    }
+    const LEVEL = h => h>=80?'green':h>=60?'yellow':h>=40?'orange':'red';
+    const pill = l => `<span class="pill ${l}">${({green:'绿',yellow:'黄',orange:'橙',red:'红'})[l]||l}</span>`;
+
+    async function refresh() {
+      const v = await api('/version'); $('ver').textContent = 'v' + (v.version||'?');
+      const es = await api('/events/stats');
+      $('transport').textContent = '事件:' + (es.transport||'?');
+      $('k-transport').textContent = es.transport || '-';
+
+      const hot = await api('/mcp', {method:'POST', body: JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'list_hot_assets',arguments:{limit:20}}})});
+      let assets = [];
+      try { assets = JSON.parse(hot.result.content[0].text).assets || []; } catch(e) { log('热点列表解析失败'); }
+      $('k-assets').textContent = assets.length;
+
+      const cnt = {red:0, orange:0, yellow:0, green:0};
+      $('rows').innerHTML = assets.map(a => {
+        const hi = (a.hi===null||a.hi===undefined) ? null : Number(a.hi);
+        if (hi!==null) cnt[LEVEL(hi)]++;
+        return `<tr>
+          <td><b>${a.asset_id}</b></td><td>${a.name||''}</td><td>${a.criticality||'-'}</td>
+          <td>${a.rms?Number(a.rms).toFixed(2):'-'}</td>
+          <td>${hi===null?'-':hi.toFixed(1)}</td>
+          <td>${hi===null?'-':`<div class="bar"><i style="width:${hi}%;background:var(--${LEVEL(hi)})"></i></div>`}</td>
+          <td>${hi===null?'<span class="pill gray">未评估</span>':pill(LEVEL(hi))}</td>
+          <td><button onclick="diag('${a.asset_id}')">诊断</button></td>
+        </tr>`;
+      }).join('');
+      $('k-red').textContent = cnt.red; $('k-orange').textContent = cnt.orange; $('k-yellow').textContent = cnt.yellow;
+      $('hot-note').textContent = '共 ' + assets.length + ' 台（按关键度排序）';
+
+      const cl = await api('/v1/cards?limit=20');
+      $('k-cards').textContent = cl.count || 0;
+      $('cards').innerHTML = (cl.cards||[]).map(c => `<tr>
+        <td>${c.card_id}</td><td>${c.asset_id}</td><td>${(c.conclusion||'').slice(0,42)}</td>
+        <td>${c.verdict}</td><td>${c.risk_level}</td>
+        <td>${c.status==='CONFIRMED'?'<span class="pill green">已确认</span>':'<span class="pill orange">待确认</span>'}</td>
+        <td>${c.status==='PENDING'
+          ? `<button class="primary" onclick="confirmCard('${c.card_id}')">确认</button>`
+          : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="7" class="muted">暂无方案卡</td></tr>';
+    }
+
+    async function diag(id) {
+      const asset = id || $('asset').value.trim();
+      if (!asset) { log('请输入设备位号'); return; }
+      $('asset').value = asset;
+      const t0 = performance.now();
+      const r = await api('/mcp', {method:'POST', body: JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',
+        params:{name:'diagnose_asset',arguments:{asset_id:asset}}})});
+      const dt = (performance.now()-t0).toFixed(0);
+      try {
+        const d = JSON.parse(r.result.content[0].text);
+        $('result').innerHTML = `
+          <p><b>${asset}</b> · HI <b style="color:var(--${LEVEL(d.hi)})">${d.hi.toFixed(1)}</b>
+             ${pill(d.level)} · 缓存命中：${d.cached?'是':'否'} · ${d.elapsed_ms||'-'}ms（含网络 ${dt}ms）</p>
+          <table><thead><tr><th>维度</th><th>得分</th><th>权重</th><th>影响</th><th>证据</th></tr></thead><tbody>
+          ${d.contributions.map(c=>`<tr><td>${c.name}</td><td>${c.s.toFixed(3)}</td><td>${c.weight}</td>
+            <td>${c.impact.toFixed(1)}</td><td>${c.evidence}</td></tr>`).join('')}
+          </tbody></table>
+          <p class="muted">${d.disclaimer||''}</p>`;
+        log(`诊断 ${asset}: HI=${d.hi.toFixed(1)} ${d.level} cached=${d.cached} ${dt}ms`);
+      } catch(e) { $('result').textContent = '诊断失败：' + JSON.stringify(r).slice(0,200); }
+    }
+
+    async function consult() {
+      const asset = $('asset').value.trim();
+      if (!asset) { log('请先输入设备位号'); return; }
+      const r = await api('/v1/consult', {method:'POST', body: JSON.stringify({tenant_id:$('tenant').value, asset_id:asset})});
+      const c = r.card;
+      if (!c) { log('会诊失败: ' + JSON.stringify(r).slice(0,150)); return; }
+      $('result').innerHTML = `
+        <p><b>${asset}</b> 方案卡 <code>${c.card_id}</code> · 判定 <b>${c.verdict}</b>${c.verdict_escalated?'（已升级）':''}
+           · 一致性 ${c.consistency} · 风险 ${c.risk_level}</p>
+        <table><thead><tr><th>方案</th><th>窗口</th><th>停机</th><th>备件</th><th>总成本</th><th>风险</th></tr></thead><tbody>
+        ${c.options.map(o=>`<tr><td>${o.option_id}</td><td>${o.window_start} ~ ${o.window_end}</td>
+          <td>${o.downtime_hours}h</td><td>${o.spare_ready?'已到':'未到'}</td>
+          <td>¥${o.cost.total.toLocaleString()}</td><td>${o.risk}</td></tr>`).join('')}
+        </tbody></table>
+        <p>净收益 <b style="color:var(--green)">¥${c.economics.net_benefit.toLocaleString()}</b>
+           （避免损失 ¥${c.economics.avoided_loss.toLocaleString()} − 总成本 ¥${c.economics.total_cost.toLocaleString()}）</p>
+        <p class="muted">角色意见：${c.opinions.map(o=>o.role+':'+o.verdict).join(' · ')}</p>
+        ${c.conflicts.length?`<p style="color:var(--orange)">冲突：${c.conflicts.join('；')}</p>`:''}
+        <p class="muted">${c.disclaimer}</p>`;
+      log(`会诊 ${asset}: ${c.card_id} verdict=${c.verdict} net=¥${c.economics.net_benefit}`);
+      refresh();
+    }
+
+    async function confirmCard(id) {
+      const role = prompt('确认角色（如 maintenance_supervisor / equipment_manager）:', 'maintenance_supervisor');
+      if (!role) return;
+      const user = prompt('确认人：', 'operator-01');
+      if (!user) return;
+      const r = await api('/v1/cards/' + id + '/confirm', {method:'POST',
+        body: JSON.stringify({role, user_id:user, decision:'confirm', comment:'dashboard confirm'})});
+      log(`确认 ${id}: ${JSON.stringify(r)}`);
+      refresh();
+    }
+
+    async function warmup() {
+      log('预热中…');
+      const r = await api('/warmup?limit=200');
+      log('预热完成: ' + JSON.stringify(r).slice(0,180));
+    }
+
+    refresh();
+    </script>
+    </body>
+    </html>
