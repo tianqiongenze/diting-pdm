@@ -102,15 +102,19 @@ class MultiLevelCache:
             return hit
         if self.l2 is None:
             return None
-        try:
-            raw = await self.l2.get(self.prefix + key)
-            if raw:
-                value = json.loads(raw)
-                self.l1.set(key, value)  # 回填 L1
-                self.l2_hits += 1
-                return value
-        except Exception:  # noqa: BLE001 - 缓存故障不得影响主流程
-            self.l2_errors += 1
+        for attempt in range(2):  # 一次重试：抖动不应退化成重新计算
+            try:
+                raw = await self.l2.get(self.prefix + key)
+                if raw:
+                    value = json.loads(raw)
+                    self.l1.set(key, value)  # 回填 L1
+                    self.l2_hits += 1
+                    return value
+                return None
+            except Exception:  # noqa: BLE001 - 缓存故障不得影响主流程
+                self.l2_errors += 1
+                if attempt == 0:
+                    await asyncio.sleep(0.02)
         return None
 
     async def set(self, key: str, value: Any) -> None:
@@ -150,7 +154,7 @@ async def build_l2(url: str | None):
     try:
         import redis.asyncio as aioredis
 
-        client = aioredis.from_url(url, encoding="utf-8", decode_responses=True, socket_timeout=0.2, socket_connect_timeout=0.2)
+        client = aioredis.from_url(url, encoding="utf-8", decode_responses=True, socket_timeout=1.0, socket_connect_timeout=1.0)
         await asyncio.wait_for(client.ping(), timeout=0.5)
         return client
     except Exception:  # noqa: BLE001

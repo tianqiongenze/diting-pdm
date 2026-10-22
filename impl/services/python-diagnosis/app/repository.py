@@ -158,10 +158,11 @@ def list_hot_assets(tenant_id: str, limit: int = 200) -> list[dict[str, Any]]:
         )
         .fetchall()
     )
-    if rows:
+    if len(rows) >= limit:
         return rows
-    # 回退：快照表有数据的设备
-    return (
+    # 读模型不全（刚上线/刚清空）→ 用快照表补齐，避免"热点列表只有 2 条"
+    seen = {r["asset_id"] for r in rows}
+    extra = (
         TenantQueryBuilder(tenant_id)
         .query(
             """
@@ -170,13 +171,20 @@ def list_hot_assets(tenant_id: str, limit: int = 200) -> list[dict[str, Any]]:
             FROM asset_metric_snapshot s
             JOIN asset a ON a.tenant_id = s.tenant_id AND a.asset_id = s.asset_id
             WHERE s.tenant_id = %s
-            ORDER BY FIELD(a.criticality,'A','B','C')
+            ORDER BY FIELD(a.criticality,'A','B','C'), s.vib_rms_mm_s DESC
             LIMIT %s
             """,
-            limit,
+            limit * 3,
         )
         .fetchall()
     )
+    for r in extra:
+        if len(rows) >= limit:
+            break
+        if r["asset_id"] not in seen:
+            rows.append(r)
+            seen.add(r["asset_id"])
+    return rows[:limit]
 
 
 def count_assets(tenant_id: str) -> int:

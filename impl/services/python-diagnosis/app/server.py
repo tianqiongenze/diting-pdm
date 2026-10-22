@@ -24,7 +24,7 @@ from litestar import Litestar, Request, get, post
 from litestar.exceptions import HTTPException
 from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN, HTTP_422_UNPROCESSABLE_ENTITY
 
-from . import domain, repository
+from . import decision, domain, events, repository
 from .cache import MultiLevelCache, build_l2
 from .schemas import DiagnoseRequest, Metrics
 
@@ -51,6 +51,11 @@ async def cache_stats() -> dict[str, Any]:
     return cache.stats()
 
 
+@get("/events/stats")
+async def events_stats() -> dict[str, Any]:
+    return events.stats_snapshot()
+
+
 @get("/warmup")
 async def warmup_endpoint(limit: int = 100) -> dict[str, Any]:
     """预热缓存：按关键度取热点设备，用快照数据构造完整 5 维请求。"""
@@ -60,16 +65,111 @@ async def warmup_endpoint(limit: int = 100) -> dict[str, Any]:
     return await warmup_run(limit=limit, concurrency=20, tenants=tenants)
 
 
+@post("/v1/consult", status_code=200)
+async def consult_endpoint(request: Request) -> dict[str, Any]:
+    payload: dict[str, Any] = await request.json()
+    """决策会诊：四角色并行 + 独立评估者 → 维护方案卡。
+
+    入参最小化：{tenant_id, asset_id}，其余从库读（快照/资产/备件/排产）。
+    可选覆盖：spare/crew/plan/downtime_cost_per_hour。
+    """
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+
+    tenant_id = str(payload.get("tenant_id", ""))
+    asset_id = str(payload.get("asset_id", ""))
+    if not tenant_id or not asset_id:
+        raise HTTPException(status_code=HTTP_422_UNPROCESSABLE_ENTITY, detail="tenant_id and asset_id required")
+    if tenant_id != tenant:
+        raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    def _run() -> dict[str, Any]:
+        asset = repository.get_asset(tenant, asset_id) or {"criticality": "B", "category": "UNKNOWN"}
+        snap = repository.get_snapshot(tenant, asset_id)
+        if not snap:
+            raise HTTPException(status_code=HTTP_422_UNPROCESSABLE_ENTITY, detail="no snapshot for asset")
+
+        # 先用快照做一次诊断，拿到 HI / 等级 / 假设
+        m = Metrics(
+            vib_rms_mm_s=snap["vib_rms_mm_s"],
+            vib_baseline_mm_s=snap["vib_baseline_mm_s"],
+            kurtosis=snap["kurtosis"],
+            temp_c=snap["temp_c"],
+            temp_baseline_c=snap["temp_baseline_c"],
+            current_dev_pct=snap["current_dev_pct"],
+            trend_pct_per_day=snap["trend_pct_per_day"],
+        )
+        diag = domain.diagnose(DiagnoseRequest(tenant_id=tenant, asset_id=asset_id, metrics=m))
+        diag["conclusion"] = (
+            f"健康指数 {diag['hi']}（{diag['level']}），"
+            f"主要贡献 {diag['contributions'][0]['name'] if diag['contributions'] else 'NA'}"
+        )
+
+        # 约束：允许请求覆盖，否则用默认值（后续接 EAM/MES）
+        spare = payload.get("spare") or {"sku": "SKF-6316-C3", "qty": 1, "eta": None}
+        crew = payload.get("crew") or {"available": 3, "required": 2, "hours": 6}
+        plan = payload.get("plan") or {"load_pct": 82, "bottleneck": "总装线", "window_available": "周日 08:00"}
+
+        opinions = [
+            decision.role_shopfloor(diag, snap),
+            decision.role_reliability(diag, asset, payload.get("history")),
+            decision.role_production(diag, plan),
+            decision.role_maintenance(diag, spare, crew),
+        ]
+        evaluation = decision.evaluate(opinions)
+        card = decision.build_card(
+            tenant, asset_id, diag, snap, opinions, evaluation, spare, crew, plan,
+            downtime_cost_per_hour=float(payload.get("downtime_cost_per_hour", 6000.0)),
+        )
+        events.emit(
+            "com.yadea.pdm.decision.cardCreated.v1",
+            tenant,
+            subject=f"{tenant}/{asset_id}",
+            data={
+                "card_id": card["card_id"],
+                "asset_id": asset_id,
+                "verdict": card["verdict"],
+                "net_benefit": card["economics"]["net_benefit"],
+                "options": len(card["options"]),
+                "conflicts": len(card["conflicts"]),
+            },
+        )
+        return {"card": card, "diagnosis": diag, "evaluation": {
+            "consistency": evaluation.consistency,
+            "conflicts": evaluation.conflicts,
+            "evidence_gaps": evaluation.evidence_gaps,
+            "risk_note": evaluation.risk_note,
+        }}
+
+    return await asyncio.to_thread(_run)
+
+
+@post("/mcp", status_code=200)
+async def mcp_endpoint(request: Request) -> dict[str, Any]:
+    payload: dict[str, Any] = await request.json()
+    """最小 MCP 服务端（JSON-RPC 2.0 over HTTP）。
+
+    支持方法：initialize / tools/list / tools/call
+    工具：get_asset / assess_health / diagnose_asset / consult_maintenance / list_hot_assets
+    """
+    from .mcp import handle_rpc
+
+    tenant = request.headers.get("X-Tenant-Id")
+    return await asyncio.to_thread(handle_rpc, payload, tenant)
+
+
 @post("/v1/diagnose", status_code=200)
-async def diagnose_endpoint(request: Request, data: dict[str, Any]) -> dict[str, Any]:
+async def diagnose_endpoint(request: Request) -> dict[str, Any]:
     started = time.perf_counter()
+    payload: dict[str, Any] = await request.json()
 
     tenant = request.headers.get("X-Tenant-Id")
     if not tenant:
         raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
 
     try:
-        req = msgspec.convert(data, DiagnoseRequest, strict=False)
+        req = msgspec.convert(payload, DiagnoseRequest, strict=False)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=HTTP_422_UNPROCESSABLE_ENTITY, detail=f"invalid payload: {exc}") from exc
 
@@ -143,6 +243,22 @@ async def diagnose_endpoint(request: Request, data: dict[str, Any]) -> dict[str,
 
         await asyncio.to_thread(_persist)
 
+    # 领域事件：诊断定稿（失败不影响响应）
+    events.emit(
+        "com.yadea.pdm.diagnosis.finalized.v1",
+        tenant,
+        subject=f"{tenant}/{req.asset_id}",
+        data={
+            "diag_id": result.get("diag_id"),
+            "asset_id": req.asset_id,
+            "hi": result["hi"],
+            "level": result["level"],
+            "degraded": result["degraded"],
+            "cached": cached,
+        },
+        trace_id=str(uuid.uuid4()),
+    )
+
     return {
         "trace_id": str(uuid.uuid4()),
         "tenant_id": tenant,
@@ -164,9 +280,10 @@ async def diagnose_endpoint(request: Request, data: dict[str, Any]) -> dict[str,
 
 async def _on_startup() -> None:
     cache.l2 = await build_l2(os.getenv("PDM_REDIS_URL"))
+    events.init(os.getenv("PDM_REDIS_URL"))
 
 app = Litestar(
-    route_handlers=[healthz, version, cache_stats, warmup_endpoint, diagnose_endpoint],
+    route_handlers=[healthz, version, cache_stats, events_stats, warmup_endpoint, diagnose_endpoint, consult_endpoint, mcp_endpoint],
     on_startup=[_on_startup],
     debug=os.getenv("PDM_ENV", "prod") != "prod",
 )

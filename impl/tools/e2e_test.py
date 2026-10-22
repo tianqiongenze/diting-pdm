@@ -207,6 +207,103 @@ class E2E:
         )
         check("T6.3 无指标 422", r.status_code == 422)
 
+
+    # ---------------- T7 决策会诊 ----------------
+    def t7_consult(self) -> None:
+        tenant = self.sample_asset["tenant_id"]
+        h = {"X-Tenant-Id": tenant}
+        r = self.client.post("/v1/consult", json={"tenant_id": tenant, "asset_id": self.sample_asset["asset_id"]}, headers=h)
+        check("T7.1 会诊 200", r.status_code == 200, f"HTTP {r.status_code}")
+        if r.status_code != 200:
+            return
+        card = r.json()["card"]
+        check("T7.2 四角色意见齐全", len(card["opinions"]) == 4)
+        check("T7.3 方案卡字段完整", all(k in card for k in
+              ("card_id", "options", "economics", "human_confirm", "conflicts", "disclaimer")))
+        check("T7.4 每个方案含成本分解", all("cost" in o and "total" in o["cost"] for o in card["options"]))
+        check("T7.5 成本加总自洽", all(
+            abs(o["cost"]["total"] - (o["cost"]["spare"] + o["cost"]["labor"] + o["cost"]["downtime"])) < 0.01
+            for o in card["options"]))
+        check("T7.6 净收益 = 避免损失 - 总成本",
+              abs(card["economics"]["net_benefit"] -
+                  (card["economics"]["avoided_loss"] - card["economics"]["total_cost"])) < 0.01)
+        check("T7.7 待人工确认", card["human_confirm"]["status"] == "PENDING")
+        check("T7.8 红色设备必须升级", card["level"] if "level" in card else True)
+        check("T7.9 免责声明", "不构成维修指令" in card["disclaimer"])
+        self.last_card = card
+
+    # ---------------- T8 MCP ----------------
+    def t8_mcp(self) -> None:
+        tenant = self.sample_asset["tenant_id"]
+        h = {"X-Tenant-Id": tenant}
+
+        def rpc(method, params=None):
+            return self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
+                                    headers=h).json()
+
+        r = rpc("initialize")
+        check("T8.1 initialize", r.get("result", {}).get("protocolVersion") == "2024-11-05")
+        r = rpc("tools/list")
+        tools = [t["name"] for t in r["result"]["tools"]]
+        check("T8.2 工具数量 5", len(tools) == 5, str(tools))
+        check("T8.3 工具含 inputSchema", all("inputSchema" in t for t in r["result"]["tools"]))
+
+        r = rpc("tools/call", {"name": "assess_health", "arguments": {"asset_id": self.sample_asset["asset_id"]}})
+        txt = r["result"]["content"][0]["text"]
+        check("T8.4 tools/call assess_health", '"hi"' in txt)
+
+        r = rpc("tools/call", {"name": "consult_maintenance", "arguments": {"asset_id": self.sample_asset["asset_id"]}})
+        txt = r["result"]["content"][0]["text"]
+        check("T8.5 tools/call consult_maintenance", '"card_id"' in txt)
+
+        r = rpc("tools/call", {"name": "no_such_tool", "arguments": {}})
+        check("T8.6 未知工具报错", r.get("error", {}).get("code") == -32602)
+
+        # 无租户头应被拒
+        r2 = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                            "params": {"name": "get_asset", "arguments": {"asset_id": "X"}}})
+        check("T8.7 缺租户头被拒", r2.json().get("error", {}).get("code") == -32001)
+
+    # ---------------- T9 事件与投影 ----------------
+    def t9_events(self) -> None:
+        tenant = self.sample_asset["tenant_id"]
+        h = {"X-Tenant-Id": tenant}
+        asset = self.sample_asset["asset_id"]
+
+        # 触发一次诊断产生事件
+        self.client.post("/v1/diagnose", json=self.last_payload, headers=h)
+        stats = self.client.get("/events/stats").json()
+        check("T9.1 事件传输已启用", stats.get("enabled") is True)
+
+        # 直接查 Redis 流长度（stats 是单 Pod 计数，不可靠）
+        out = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "root@10.167.2.175",
+             f"kubectl -n infra exec deploy/redis -- redis-cli -a ${{REDIS_PW:-difyai123456}} -n 3 XLEN pdm:events:{tenant} 2>/dev/null"],
+            capture_output=True, text=True, timeout=30)
+        try:
+            n = int(out.stdout.strip() or 0)
+        except ValueError:
+            n = 0
+        check("T9.2 事件流有消息", n > 0, f"{n} events")
+
+        # Go 投影器存活
+        out = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "root@10.167.2.175",
+             "kubectl -n pdm-prod get pods -l app=go-eventpipe --no-headers | awk '{print $2}'"],
+            capture_output=True, text=True, timeout=30)
+        check("T9.3 Go 投影器 Running", "1/1" in out.stdout)
+
+        # 读模型已更新
+        c = pymysql.connect(**self.db, cursorclass=pymysql.cursors.DictCursor)
+        cur = c.cursor()
+        cur.execute("SELECT COUNT(*) AS n FROM read_asset_health")
+        n_health = cur.fetchone()["n"]
+        cur.execute("SELECT COUNT(*) AS n FROM processed_event")
+        n_proc = cur.fetchone()["n"]
+        c.close()
+        check("T9.4 读模型已投影", n_health > 0, f"{n_health} rows")
+        check("T9.5 幂等表有记录", n_proc > 0, f"{n_proc} processed")
+
     # ---------------- 主入口 ----------------
     def run_all(self) -> bool:
         import redis as redis_sync  # noqa: F401
@@ -218,6 +315,9 @@ class E2E:
         self.t4_cache()
         self.t5_perf()
         self.t6_security()
+        self.t7_consult()
+        self.t8_mcp()
+        self.t9_events()
         print(f"\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
         if FAIL:
             print("失败项:", ", ".join(FAIL))

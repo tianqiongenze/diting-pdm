@@ -1,0 +1,68 @@
+---
+# Go 事件管线（CQRS 读侧投影器）
+# 与 Python 投影器共用幂等键 read-model-v1，二者可同时运行不会重复计数
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-eventpipe
+  namespace: pdm-prod
+  labels:
+    app: go-eventpipe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: go-eventpipe
+  template:
+    metadata:
+      labels:
+        app: go-eventpipe
+    spec:
+      priorityClassName: pdm-data-critical
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: eventpipe
+          image: 10.167.2.175:30500/pdm/go-eventpipe:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - name: PDM_REDIS_ADDR
+              value: redis.infra.svc.cluster.local:6379
+            - name: PDM_REDIS_DB
+              value: "3"
+            - name: PDM_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: pdm-redis-pw, key: password, optional: true}
+            - name: PDM_TIDB_HOST
+              value: tidb.infra.svc.cluster.local
+            - name: PDM_TIDB_PORT
+              value: "4000"
+            - name: PDM_TIDB_USER
+              value: pdm_diag
+            - name: PDM_TIDB_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: pdm-tidb, key: password}
+            - name: PDM_TENANTS
+              value: site-a,site-b
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
