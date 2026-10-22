@@ -1,0 +1,102 @@
+---
+# TiDB Operator 托管的新集群（tidb-new 命名空间）
+#
+# 定位：与现有手工 StatefulSet 集群（infra 命名空间）**并行运行**，
+#       作为迁移目标 + 灾备集群。旧集群不动，验证后再切流量。
+#
+# 资源预估（worker1/worker2 各余 2.3T）：
+#   3 PD × 20Gi + 3 TiKV × 100Gi + 2 TiDB + 1 TiFlash × 100Gi = 520Gi
+#
+# 存储类：pdm-local-ssd（已存在的 local-path 类）
+apiVersion: pingcap.com/v1alpha1
+kind: TidbCluster
+metadata:
+  name: pdm-new
+  namespace: tidb-new
+spec:
+  version: v8.5.8
+  # 本机 CPU（Xeon 5320）不支持 x86-64-v2，必须用 -x86v1 变体
+  timezone: Asia/Shanghai
+  pvReclaimPolicy: Retain
+  configUpdateStrategy: RollingUpdate
+
+  pd:
+    baseImage: 10.167.2.175:30500/base/pingcap/pd
+    version: v8.5.8-shfix
+    replicas: 3
+    requests:
+      storage: "20Gi"
+    config: |
+      [log]
+      level = "info"
+    # 强制落到 worker1/worker2（master 磁盘仅剩 91G）
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values: ["pd"]
+            topologyKey: kubernetes.io/hostname
+    tolerations:
+      - key: dedicated
+        operator: Exists
+
+  tikv:
+    baseImage: 10.167.2.175:30500/base/pingcap/tikv
+    version: v8.5.8-shfix
+    replicas: 3
+    requests:
+      storage: "100Gi"
+    config: |
+      [log]
+      level = "info"
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values: ["tikv"]
+            topologyKey: kubernetes.io/hostname
+    tolerations:
+      - key: dedicated
+        operator: Exists
+
+  tidb:
+    baseImage: 10.167.2.175:30500/base/pingcap/tidb
+    version: v8.5.8-shfix
+    replicas: 2
+    service:
+      type: NodePort
+      externalTrafficPolicy: Local
+      port: 4000
+      exposeStatus: true
+    config: |
+      [log]
+      level = "info"
+    tolerations:
+      - key: dedicated
+        operator: Exists
+
+  tiflash:
+    baseImage: 10.167.2.175:30500/base/pingcap/tiflash
+    version: v8.5.8-shfix
+    replicas: 1
+    storageClaims:
+      - resources:
+          requests:
+            storage: "100Gi"
+    tolerations:
+      - key: dedicated
+        operator: Exists
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tidb-new
+  labels:
+    tier: data

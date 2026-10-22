@@ -403,6 +403,43 @@ class E2E:
             n = 0
         check("T15.1 备份+清理 CronJob 均在", n == 2, f"{n} cronjobs")
 
+
+    # ---------------- T16 趋势 API ----------------
+    def t16_trend(self) -> None:
+        tenant = self.sample_asset["tenant_id"]
+        h = {"X-Tenant-Id": tenant}
+        # 用已有历史的设备验证；无历史时至少应返回空结构而非 500
+        asset = "TREND-FINAL"
+        r = self.client.get(f"/v1/assets/{asset}/trend?days=7", headers=h)
+        check("T16.1 趋势接口 200", r.status_code == 200, f"HTTP {r.status_code}")
+        d = r.json()
+        check("T16.2 结构完整", all(k in d for k in ("series", "summary", "points")))
+        if d["points"] > 0:
+            check("T16.3 有数据点", d["points"] >= 1, f"{d['points']} pts")
+            check("T16.4 汇总自洽",
+                  abs(d["summary"]["avg_hi"] - sum(x["hi"] for x in d["series"]) / len(d["series"])) < 1.0)
+        # 缺 header 应 400
+        r2 = self.client.get(f"/v1/assets/{asset}/trend")
+        check("T16.5 缺租户头 400", r2.status_code == 400, f"HTTP {r2.status_code}")
+
+    # ---------------- T17 EAM 集成 ----------------
+    def t17_integration(self) -> None:
+        tenant = self.sample_asset["tenant_id"]
+        h = {"X-Tenant-Id": tenant}
+        r = self.client.get("/integration/stats")
+        check("T17.1 Outbox 统计可查", r.status_code == 200 and isinstance(r.json(), dict))
+        stats = r.json()
+        check("T17.2 有 SENT 记录", stats.get("SENT", 0) > 0, str(stats))
+        out = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "root@10.167.2.175",
+             "kubectl -n pdm-prod logs -l app=integration-worker -c mock-eam --tail=200 | grep -c '\[eam\] created'"],
+            capture_output=True, text=True, timeout=40)
+        try:
+            n = int(out.stdout.strip() or 0)
+        except ValueError:
+            n = 0
+        check("T17.3 EAM 已建工单", n > 0, f"{n} work orders")
+
     # ---------------- 主入口 ----------------
     def run_all(self) -> bool:
         import redis as redis_sync  # noqa: F401
@@ -423,6 +460,8 @@ class E2E:
         self.t13_dashboard_auth()
         self.t14_pulsar_consumer()
         self.t15_backup()
+        self.t16_trend()
+        self.t17_integration()
         print(f"\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
         if FAIL:
             print("失败项:", ", ".join(FAIL))

@@ -1,0 +1,74 @@
+---
+# 集成出站：Mock EAM + Outbox worker（同 Pod 双容器）
+#
+# 为什么同 Pod：
+#   本集群的 NetworkPolicy 对同命名空间 Pod 间流量未按预期放行
+#   （default-deny-ingress + allow 规则已配，实测仍不通，疑 CNI 未生效）。
+#   Mock EAM 本就是联调用的内部组件，与 worker 共处一 Pod 走 localhost 是最简解。
+#   生产环境 EAM 是外部系统，worker 通过 EAM_BASE 指向真实端点即可，无需改代码。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: integration-worker
+  namespace: pdm-prod
+  labels: {app: integration-worker}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: integration-worker}
+  template:
+    metadata:
+      labels: {app: integration-worker}
+    spec:
+      containers:
+        - name: mock-eam
+          image: 10.167.2.175:30500/pdm/python-diagnosis:0.8.1
+          imagePullPolicy: IfNotPresent
+          command: ["python", "tools/mock_eam.py"]
+          workingDir: /app
+          env:
+            - {name: EAM_HMAC_SECRET, value: diting-eam-secret}
+            - {name: PORT, value: "8082"}
+          ports:
+            - {name: eam, containerPort: 8082}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 300m, memory: 256Mi}
+          readinessProbe:
+            httpGet: {path: /healthz, port: eam}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+        - name: worker
+          image: 10.167.2.175:30500/pdm/python-diagnosis:0.8.1
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "app.integration"]
+          workingDir: /app
+          env:
+            - {name: PYTHONPATH, value: "/app:/app/_pdm_signal"}
+            - {name: EAM_BASE, value: "http://127.0.0.1:8082"}
+            - {name: EAM_HMAC_SECRET, value: diting-eam-secret}
+            - {name: PDM_TIDB_HOST, value: tidb.infra.svc.cluster.local}
+            - {name: PDM_TIDB_PORT, value: "4000"}
+            - {name: PDM_TIDB_USER, value: pdm_diag}
+            - name: PDM_TIDB_PASSWORD
+              valueFrom: {secretKeyRef: {name: pdm-tidb, key: password, optional: true}}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 300m, memory: 256Mi}
+---
+# pdm-prod 默认拒绝入站；显式放行命名空间内 Pod 间通信
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-within-pdm-prod
+  namespace: pdm-prod
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}          # 同命名空间任意 Pod
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: infra   # 允许 infra（Redis/TiDB/Pulsar）

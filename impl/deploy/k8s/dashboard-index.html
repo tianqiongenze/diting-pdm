@@ -38,6 +38,10 @@
   .bar>i{display:block;height:100%}
   #log{white-space:pre-wrap;font:12px/1.6 ui-monospace,Consolas,monospace;background:#0f172a;color:#cbd5e1;padding:12px;border-radius:8px;max-height:220px;overflow:auto}
   .muted{color:var(--sub);font-size:12px}
+  .trend-grid{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .trend-grid .kpi{min-width:110px;padding:8px 12px}
+  .trend-grid .v{font-size:18px}
+  svg.trend{width:100%;height:220px;background:#fbfcfe;border:1px solid var(--line);border-radius:8px}
 </style>
 </head>
 <body>
@@ -78,6 +82,11 @@
       <thead><tr><th>卡片编号</th><th>设备</th><th>结论</th><th>判定</th><th>风险</th><th>状态</th><th>操作</th></tr></thead>
       <tbody id="cards"></tbody>
     </table>
+  </div>
+
+  <div class="panel">
+    <h2>健康指数趋势 <span class="muted" id="trend-note"></span></h2>
+    <div id="trend"><div class="muted">选择设备后点击「趋势」查看 HI 历史曲线。</div></div>
   </div>
 
   <div class="panel">
@@ -128,7 +137,7 @@ async function refresh() {
       <td>${hi===null?'-':hi.toFixed(1)}</td>
       <td>${hi===null?'-':`<div class="bar"><i style="width:${hi}%;background:var(--${LEVEL(hi)})"></i></div>`}</td>
       <td>${hi===null?'<span class="pill gray">未评估</span>':pill(LEVEL(hi))}</td>
-      <td><button onclick="diag('${a.asset_id}')">诊断</button></td>
+      <td><button onclick="diag('${a.asset_id}')">诊断</button> <button onclick="trend('${a.asset_id}')">趋势</button></td>
     </tr>`;
   }).join('');
   $('k-red').textContent = cnt.red; $('k-orange').textContent = cnt.orange; $('k-yellow').textContent = cnt.yellow;
@@ -200,6 +209,49 @@ async function confirmCard(id) {
     body: JSON.stringify({role, user_id:user, decision:'confirm', comment:'dashboard confirm'})});
   log(`确认 ${id}: ${JSON.stringify(r)}`);
   refresh();
+}
+
+async function trend(id) {
+  const asset = id || $('asset').value.trim();
+  if (!asset) { log('请先输入设备位号'); return; }
+  $('asset').value = asset;
+  const d = await api('/v1/assets/' + asset + '/trend?days=7');
+  if (!d.points) {
+    $('trend').innerHTML = '<div class="muted">暂无历史数据（需等投影器积累事件）。</div>';
+    log(`趋势 ${asset}: 无数据`);
+    return;
+  }
+  const s = d.summary;
+  $('trend-note').textContent = `${asset} · ${d.points} 点（原始 ${d.total_rows} 行，抽样步长 ${d.sampled_step}）`;
+  const W=680, H=220, P=36;
+  const xs = d.series.map((_,i)=>P+i*(W-2*P)/Math.max(1,d.series.length-1));
+  const ys = d.series.map(p=>H-P-(p.hi/100)*(H-2*P));
+  const path = d.series.map((p,i)=>(i?'L':'M')+xs[i].toFixed(1)+','+ys[i].toFixed(1)).join(' ');
+  const area = path + ` L${xs[xs.length-1].toFixed(1)},${H-P} L${xs[0].toFixed(1)},${H-P} Z`;
+  const dots = d.series.map((p,i)=>{
+    const c = p.level==='red'?'#dc2626':p.level==='orange'?'#f97316':p.level==='yellow'?'#eab308':'#16a34a';
+    return `<circle cx="${xs[i].toFixed(1)}" cy="${ys[i].toFixed(1)}" r="2.2" fill="${c}"/>`;
+  }).join('');
+  const grid = [0,25,50,75,100].map(v=>{
+    const y=(H-P-(v/100)*(H-2*P)).toFixed(1);
+    return `<line x1="${P}" y1="${y}" x2="${W-P}" y2="${y}" stroke="#e3e8ef"/><text x="6" y="${(+y+4).toFixed(1)}" font-size="10" fill="#94a3b8">${v}</text>`;
+  }).join('');
+  $('trend').innerHTML = `
+    <div class="trend-grid">
+      <div class="kpi"><div class="l">最新 HI</div><div class="v" style="color:var(--${LEVEL(s.latest_hi)})">${s.latest_hi.toFixed(1)}</div></div>
+      <div class="kpi"><div class="l">均值</div><div class="v">${s.avg_hi}</div></div>
+      <div class="kpi"><div class="l">最低</div><div class="v" style="color:var(--${LEVEL(s.min_hi)})">${s.min_hi}</div></div>
+      <div class="kpi"><div class="l">最高</div><div class="v">${s.max_hi}</div></div>
+      <div class="kpi"><div class="l">红色占比</div><div class="v" style="color:${s.red_ratio>0.1?'var(--red)':'inherit'}">${(s.red_ratio*100).toFixed(1)}%</div></div>
+    </div>
+    <svg class="trend" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      ${grid}
+      <path d="${area}" fill="rgba(37,99,235,0.08)"/>
+      <path d="${path}" fill="none" stroke="#2563eb" stroke-width="1.6"/>
+      ${dots}
+    </svg>
+    <div class="muted" style="margin-top:6px">横轴：${d.series[0].ts} → ${d.series[d.series.length-1].ts}　点色对应四级等级</div>`;
+  log(`趋势 ${asset}: ${d.points} 点, 均值=${s.avg_hi}, 红色占比=${(s.red_ratio*100).toFixed(1)}%`);
 }
 
 async function warmup() {

@@ -319,6 +319,52 @@ def confirm_recommendation_card(tenant_id: str, card_id: str, role: str,
         return {"card_id": card_id, "status": "PENDING", "confirmed_by": sorted(confirmed), "missing": missing}
 
 
+def get_health_trend(tenant_id: str, asset_id: str, days: int = 7) -> dict[str, Any]:
+    """HI 趋势（看板折线图）。
+
+    返回按小时聚合的序列 + 汇总指标（均值/最低/红色持续时长）。
+    采样上限 500 点，超出按时序抽样，避免前端渲染压力。
+    """
+    import datetime
+
+    since = datetime.datetime.now() - datetime.timedelta(days=max(1, min(days, 90)))
+    # 时序查询量大，直接用 connect（不走 TenantQueryBuilder 的通用封装）
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT hi, level, ts FROM read_asset_health_history "
+            "WHERE tenant_id=%s AND asset_id=%s AND ts >= %s ORDER BY ts",
+            (tenant_id, asset_id, since),
+        )
+        rows = cur.fetchall()
+
+    if not rows:
+        return {"asset_id": asset_id, "points": 0, "series": [], "summary": {}}
+
+    step = max(1, len(rows) // 500)
+    sampled = rows[::step]
+    series = [
+        {"ts": r["ts"].strftime("%Y-%m-%d %H:%M"), "hi": float(r["hi"]), "level": r["level"]}
+        for r in sampled
+    ]
+    his = [float(r["hi"]) for r in rows]
+    red = sum(1 for r in rows if r["level"] == "red")
+    return {
+        "asset_id": asset_id,
+        "points": len(series),
+        "total_rows": len(rows),
+        "sampled_step": step,
+        "series": series,
+        "summary": {
+            "avg_hi": round(sum(his) / len(his), 2),
+            "min_hi": round(min(his), 2),
+            "max_hi": round(max(his), 2),
+            "latest_hi": his[-1],
+            "red_points": red,
+            "red_ratio": round(red / len(rows), 3),
+        },
+    }
+
+
 def list_pending_cards(tenant_id: str, limit: int = 50) -> list[dict[str, Any]]:
     return (
         TenantQueryBuilder(tenant_id)

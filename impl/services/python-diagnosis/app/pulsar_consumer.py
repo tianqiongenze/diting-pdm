@@ -43,6 +43,20 @@ def _already_processed(event_id: str) -> bool:
         return False
 
 
+def _write_history(cur, tenant: str, asset: str, hi, level) -> None:
+    """写 HI 历史（看板趋势图）。失败不影响读模型，静默降级。"""
+    import datetime
+
+    try:
+        cur.execute(
+            "INSERT IGNORE INTO read_asset_health_history(tenant_id,asset_id,hi,level,ts) "
+            "VALUES (%s,%s,%s,%s,%s)",
+            (tenant, asset, hi, level, datetime.datetime.now()),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def project(event: dict[str, Any]) -> str | None:
     etype = event.get("type", "")
     tenant = event.get("tenant_id", "")
@@ -59,6 +73,7 @@ def project(event: dict[str, Any]) -> str | None:
                 "ON DUPLICATE KEY UPDATE hi=VALUES(hi),level=VALUES(level)",
                 (tenant, asset, data.get("hi"), data.get("level")),
             )
+            _write_history(cur, tenant, asset, data.get("hi"), data.get("level"))
         return f"health<-{asset} hi={data.get('hi')}"
 
     if etype == "com.yadea.pdm.decision.cardCreated.v1":
@@ -83,11 +98,16 @@ def run_forever(client: Any, tenants: list[str], timeout_ms: int = 1000) -> None
     在关闭-重建的间隙里发布的消息可能被跳过。持久 consumer 由客户端
     维护内部游标，未 ACK 的消息会自动重投。
     """
+    import pulsar  # 局部导入：避免模块级依赖，便于单元测试
+
     consumers = []
     for tenant in tenants:
         topic = f"persistent://pdm/{tenant}/diagnosis-events"
         try:
-            consumers.append((tenant, topic, client.subscribe(topic, SUBSCRIPTION)))
+            # Shared 订阅：允许多个消费者实例共同消费同一订阅（可水平扩展）。
+            # 默认 Exclusive 会在滚动更新时因旧实例未退出而 ConsumerBusy。
+            consumers.append((tenant, topic, client.subscribe(
+                topic, SUBSCRIPTION, consumer_type=pulsar.ConsumerType.Shared)))
             print(f"[sub] {topic} subscription={SUBSCRIPTION}", flush=True)
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] subscribe {topic}: {exc}", flush=True)
@@ -143,7 +163,7 @@ def main() -> None:
     a = ap.parse_args()
     tenants = [t.strip() for t in a.tenants.split(",") if t.strip()]
 
-    import pulsar
+    import pulsar  # 局部导入：run_forever 内亦各自导入，避免模块级依赖
 
     url = os.getenv("PDM_PULSAR_URL", "pulsar://pulsar-broker.infra.svc.cluster.local:6650")
     client = pulsar.Client(url)

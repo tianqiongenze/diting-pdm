@@ -25,7 +25,7 @@ from litestar.response import Response
 from litestar.exceptions import HTTPException
 from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN, HTTP_409_CONFLICT, HTTP_422_UNPROCESSABLE_ENTITY
 
-from . import decision, domain, events, repository
+from . import decision, domain, events, integration, repository
 from .cache import MultiLevelCache, build_l2
 from .schemas import DiagnoseRequest, Metrics
 
@@ -50,6 +50,33 @@ async def version() -> dict[str, str]:
 @get("/cache/stats")
 async def cache_stats() -> dict[str, Any]:
     return cache.stats()
+
+
+@get("/v1/assets/{asset_id:str}/trend")
+async def asset_trend(request: Request, days: int = 7) -> dict[str, Any]:
+    """设备 HI 趋势（看板折线图）。days 1-90，超出自动截断。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    if os.getenv("PDM_DB_ENABLED", "1") != "1":
+        return {"asset_id": request.path_params["asset_id"], "points": 0, "series": [], "summary": {}}
+    try:
+        return await asyncio.to_thread(
+            repository.get_health_trend, tenant, request.path_params["asset_id"], days
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)[:120]) from exc
+
+
+@get("/integration/stats")
+async def integration_stats() -> dict[str, Any]:
+    """EAM/MES 出站信箱状态。"""
+    if os.getenv("PDM_DB_ENABLED", "1") != "1":
+        return {"enabled": False}
+    try:
+        return await asyncio.to_thread(integration.outbox_stats)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:120]}
 
 
 @get("/dashboard")
@@ -167,6 +194,15 @@ async def consult_endpoint(request: Request) -> dict[str, Any]:
             tenant, asset_id, diag, snap, opinions, evaluation, spare, crew, plan,
             downtime_cost_per_hour=float(payload.get("downtime_cost_per_hour", 6000.0)),
         )
+        # 红色等级即触发工单预入队（不等人工确认，避免延误）
+        # 理由：ACT_NOW 等级下等确认会错过 4h SLA，先建单后由人工确认/撤销
+        if os.getenv("PDM_EAM_ENABLED", "1") == "1" and card.get("verdict") == "ACT_NOW":
+            try:
+                integration.enqueue(tenant, "eam", "workOrder.create",
+                                    f"card:{card['card_id']}",
+                                    integration.work_order_payload_from_card(card, tenant))
+            except Exception as exc:  # noqa: BLE001
+                print(f"[warn] eam enqueue failed: {exc}", flush=True)
         # 方案卡落库 + 工单闭环起点（同步段，随后统一在 async 侧执行）
         if os.getenv("PDM_DB_ENABLED", "1") == "1":
             try:
@@ -372,7 +408,7 @@ async def _on_startup() -> None:
     events.init(os.getenv("PDM_REDIS_URL"))
 
 app = Litestar(
-    route_handlers=[healthz, version, cache_stats, events_stats, warmup_endpoint, diagnose_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard],
+    route_handlers=[healthz, version, cache_stats, events_stats, integration_stats, asset_trend, warmup_endpoint, diagnose_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard],
     on_startup=[_on_startup],
     debug=os.getenv("PDM_ENV", "prod") != "prod",
 )

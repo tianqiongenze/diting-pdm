@@ -59,6 +59,20 @@ def _already_processed(tenant: str, event_id: str) -> bool:
         return False
 
 
+def _write_history(cur, tenant: str, asset: str, hi, level) -> None:
+    """写 HI 历史（看板趋势图）。失败不影响读模型，静默降级。"""
+    import datetime
+
+    try:
+        cur.execute(
+            "INSERT IGNORE INTO read_asset_health_history(tenant_id,asset_id,hi,level,ts) "
+            "VALUES (%s,%s,%s,%s,%s)",
+            (tenant, asset, hi, level, datetime.datetime.now()),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def project(event: dict[str, Any]) -> str | None:
     """把事件投影到读模型。返回动作描述。"""
     etype = event.get("type", "")
@@ -76,6 +90,7 @@ def project(event: dict[str, Any]) -> str | None:
                 "ON DUPLICATE KEY UPDATE hi=VALUES(hi),level=VALUES(level)",
                 (tenant, asset, data.get("hi"), data.get("level")),
             )
+            _write_history(cur, tenant, asset, data.get("hi"), data.get("level"))
         return f"read_asset_health <- {asset} hi={data.get('hi')}"
 
     if etype == "com.yadea.pdm.decision.cardCreated.v1":
