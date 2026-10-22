@@ -1,0 +1,46 @@
+---
+# 备份清理：删除 MinIO 上早于保留期的备份目录
+# 与 tidb-backup 配套：备份每天 02:00，清理每天 03:30
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: tidb-backup-prune
+  namespace: pdm-prod
+spec:
+  schedule: "30 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels: {app: tidb-backup-prune}
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: prune
+              image: 10.167.2.175:30500/pdm/python-diagnosis:0.7.5
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "app.backup_prune"]
+              workingDir: /app
+              args: ["--keep-days", "7"]
+              workingDir: /app
+              env:
+                - name: PYTHONPATH
+                  value: /app
+                - name: S3_ENDPOINT
+                  value: http://milvus-minio.infra.svc.cluster.local:9000
+                - name: S3_BUCKET
+                  value: pdm-backup
+                - name: S3_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: {name: pdm-minio, key: access-key}
+                - name: S3_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef: {name: pdm-minio, key: secret-key}
+              resources:
+                requests: {cpu: 100m, memory: 256Mi}
+                limits: {cpu: 500m, memory: 512Mi}

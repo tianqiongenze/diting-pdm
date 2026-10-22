@@ -1,0 +1,73 @@
+---
+# 谛听 PdM · 资产与知识上下文（Java/Spring Boot 3.3 + JDK 21）
+#
+# 职责（docs/16 §2 语言矩阵）：Java 负责「资产 / 知识 / 集成」上下文
+#   - 设备台账、备件、维修历史
+#   - 与 EAM/MES 对接（后续）
+#   - 知识库检索（Milvus/NebulaGraph，后续）
+# 诊断计算在 Python 侧，不在本服务。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-asset
+  namespace: pdm-prod
+  labels:
+    app: java-asset
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: java-asset
+  template:
+    metadata:
+      labels:
+        app: java-asset
+    spec:
+      priorityClassName: pdm-data-critical
+      containers:
+        - name: asset
+          image: 10.167.2.175:30500/pdm/java-asset:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8081}
+          env:
+            - name: PDM_TIDB_HOST
+              value: tidb.infra.svc.cluster.local
+            - name: PDM_TIDB_PORT
+              value: "4000"
+            - name: PDM_TIDB_USER
+              value: pdm_diag
+            - name: PDM_TIDB_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: pdm-tidb, key: password, optional: true}
+          resources:
+            requests: {cpu: 200m, memory: 512Mi}
+            limits: {cpu: "1", memory: 1Gi}
+          readinessProbe:
+            httpGet: {path: /actuator/health/readiness, port: http}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /actuator/health/liveness, port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: java-asset
+  namespace: pdm-prod
+spec:
+  selector:
+    app: java-asset
+  ports:
+    - {name: http, port: 8081, targetPort: http}

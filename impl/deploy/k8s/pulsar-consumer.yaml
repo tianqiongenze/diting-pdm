@@ -1,0 +1,51 @@
+---
+# Pulsar 消费者投影器（CQRS Read Side · Pulsar 路径）
+# 与 projector.py(Redis) / go-eventpipe 共用幂等键 read-model-v1，可同时运行
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pulsar-consumer
+  namespace: pdm-prod
+  labels:
+    app: pulsar-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pulsar-consumer
+  template:
+    metadata:
+      labels:
+        app: pulsar-consumer
+    spec:
+      priorityClassName: pdm-data-critical
+      containers:
+        - name: consumer
+          image: 10.167.2.175:30500/pdm/python-diagnosis:0.7.4
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "app.pulsar_consumer"]
+          workingDir: /app
+          env:
+            - name: PYTHONPATH
+              value: /app:/app/_pdm_signal
+            - name: PDM_PULSAR_URL
+              value: pulsar://pulsar-broker.infra.svc.cluster.local:6650
+            - name: PDM_TENANTS
+              value: site-a,site-b
+            - name: PDM_TIDB_HOST
+              value: tidb.infra.svc.cluster.local
+            - name: PDM_TIDB_PORT
+              value: "4000"
+            - name: PDM_TIDB_USER
+              value: pdm_diag
+            - name: PDM_TIDB_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: pdm-tidb, key: password, optional: true}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "test -f /proc/1/status"]
+            initialDelaySeconds: 5
+            periodSeconds: 15

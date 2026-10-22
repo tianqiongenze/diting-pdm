@@ -355,8 +355,53 @@ class E2E:
 
     # ---------------- T12 看板 ----------------
     def t12_dashboard(self) -> None:
-        r = self.client.get("/dashboard")
-        check("T12.1 看板可访问", r.status_code == 200 and "谛听" in r.text, f"HTTP {r.status_code}")
+        import base64
+        import os
+
+        user = os.getenv("PDM_DASHBOARD_USER", "pdmadmin")
+        pwd = os.getenv("PDM_DASHBOARD_PASS", "Diting2026!")
+        auth = "Basic " + base64.b64encode(f"{user}:{pwd}".encode()).decode()
+        r = self.client.get("/dashboard", headers={"Authorization": auth})
+        check("T12.1 看板可访问（带凭据）", r.status_code == 200 and "谛听" in r.text, f"HTTP {r.status_code}")
+
+
+    # ---------------- T13 看板鉴权 ----------------
+    def t13_dashboard_auth(self) -> None:
+        import base64
+
+        r0 = self.client.get("/dashboard")
+        check("T13.1 无凭据 401", r0.status_code == 401, f"HTTP {r0.status_code}")
+        r1 = self.client.get("/dashboard", headers={"Authorization": "Basic " + base64.b64encode(b"a:b").decode()})
+        check("T13.2 错误凭据 401", r1.status_code == 401, f"HTTP {r1.status_code}")
+
+    # ---------------- T14 Pulsar 消费者 ----------------
+    def t14_pulsar_consumer(self) -> None:
+        out = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "root@10.167.2.175",
+             "kubectl -n pdm-prod get pods -l app=pulsar-consumer --no-headers | awk '{print $2}'"],
+            capture_output=True, text=True, timeout=40)
+        check("T14.1 Pulsar 消费者 Running", "1/1" in out.stdout)
+        out = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "root@10.167.2.175",
+             "kubectl -n pdm-prod logs -l app=pulsar-consumer --tail=200 | grep -c '\[pulsar\]'"],
+            capture_output=True, text=True, timeout=40)
+        try:
+            n = int(out.stdout.strip() or 0)
+        except ValueError:
+            n = 0
+        check("T14.2 有投影日志", n > 0, f"{n} projections")
+
+    # ---------------- T15 备份与清理 ----------------
+    def t15_backup(self) -> None:
+        out = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "root@10.167.2.175",
+             "kubectl -n pdm-prod get cronjob tidb-backup tidb-backup-prune --no-headers | wc -l"],
+            capture_output=True, text=True, timeout=40)
+        try:
+            n = int(out.stdout.strip() or 0)
+        except ValueError:
+            n = 0
+        check("T15.1 备份+清理 CronJob 均在", n == 2, f"{n} cronjobs")
 
     # ---------------- 主入口 ----------------
     def run_all(self) -> bool:
@@ -375,6 +420,9 @@ class E2E:
         self.t10_pulsar()
         self.t11_card_lifecycle()
         self.t12_dashboard()
+        self.t13_dashboard_auth()
+        self.t14_pulsar_consumer()
+        self.t15_backup()
         print(f"\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
         if FAIL:
             print("失败项:", ", ".join(FAIL))

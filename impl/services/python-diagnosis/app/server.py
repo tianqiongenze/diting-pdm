@@ -53,8 +53,23 @@ async def cache_stats() -> dict[str, Any]:
 
 
 @get("/dashboard")
-async def dashboard() -> Any:
-    """健康看板（静态页，由 ConfigMap 挂载到 /app/static/dashboard.html）。"""
+async def dashboard(request: Request) -> Any:
+    """健康看板（静态页，ConfigMap 挂载到 /app/static/dashboard.html）。
+
+    鉴权：HTTP Basic Auth。账号密码由 PDM_DASHBOARD_USER / PDM_DASHBOARD_PASS
+    注入（K8s Secret）。未配置时拒绝访问（fail-closed，不提供匿名降级）。
+    """
+    user = os.getenv("PDM_DASHBOARD_USER", "")
+    pwd = os.getenv("PDM_DASHBOARD_PASS", "")
+    if not user or not pwd:
+        return Response(content="<h3>dashboard auth not configured</h3>",
+                        media_type="text/html; charset=utf-8", status_code=503)
+    auth = request.headers.get("Authorization", "")
+    if not _check_basic_auth(auth, user, pwd):
+        return Response(content="<h3>401 Unauthorized</h3>",
+                        media_type="text/html; charset=utf-8", status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="diting-pdm"'})
+
     path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "dashboard.html")
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fh:
@@ -63,6 +78,22 @@ async def dashboard() -> Any:
         content="<h3>dashboard not mounted</h3><p>ConfigMap pdm-dashboard 未挂载</p>",
         media_type="text/html; charset=utf-8",
     )
+
+
+def _check_basic_auth(header: str, expect_user: str, expect_pass: str) -> bool:
+    """常量时间比较，防时序攻击。"""
+    import base64
+    import hmac
+
+    if not header.startswith("Basic "):
+        return False
+    try:
+        raw = base64.b64decode(header[6:]).decode()
+        got_user, _, got_pass = raw.partition(":")
+    except Exception:  # noqa: BLE001
+        return False
+    return (hmac.compare_digest(got_user.encode(), expect_user.encode())
+            and hmac.compare_digest(got_pass.encode(), expect_pass.encode()))
 
 
 @get("/events/stats")
