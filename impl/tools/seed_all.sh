@@ -46,6 +46,7 @@ for idx in "${!PIDS[@]}"; do
     FAIL=1
   fi
 done
+[ "$FAIL" = "1" ] && echo "有分片失败，用 bash tools/seed_all.sh $SCALE $SHARDS 重跑（会先清空）"
 
 echo "=== 汇总 ==="
 "$PY" - <<'PYEOF'
