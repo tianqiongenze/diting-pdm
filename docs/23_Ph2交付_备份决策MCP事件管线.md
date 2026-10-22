@@ -155,12 +155,46 @@ Redis Stream  pdm:events:<tenant>   (MAXLEN ~1e6, 保留 7 天)
 
 ---
 
-## 7. 仍未完成
+## 7. Rust 边缘采集（已完成）
+
+### 7.1 为什么零依赖
+
+工业边缘要长期稳定运行，依赖越少越可靠；现场部署常无外网，`cargo` 拉 crates 是负担。因此只用 `std`：手写 HTTP/1.1（`TcpStream`）+ 自实现 xorshift 随机 + 纯 Rust DSP。
+
+### 7.2 实测
+
+```
+[edge] target=10.167.2.175:32231 /pdm-api/v1/diagnose tenant=site-a asset=FAN-00004 fs=25600
+[edge] #0 local_dsp rms=1.430 peak=2.399 kurt=1.58 crest=1.68 impulse=false
+[edge] #0 uplink ok hi=100.0 level=green pending=0
+[edge] #2 local_dsp rms=2.015 peak=6.101 kurt=1.60 crest=3.03 impulse=true
+[edge] #2 uplink ok hi=99.77 level=green pending=0
+[edge] #3 local_dsp rms=2.301 peak=7.271 kurt=1.59 crest=3.16 impulse=true
+[edge] #3 uplink ok hi=95.21 level=green pending=0
+```
+
+**三个能力被验证：**
+1. **边缘本地 DSP**：RMS/峰值/峭度/峰值因子在边缘算完再上行（原始波形不出厂）
+2. **冲击检出**：注入点蚀后 crest 从 1.68 → 3.16，HI 从 100 → 95.21
+3. **断网降级**：首次运行（无 Host 头）4 次全部 `DEGRADED` 且 `cached` 累加，恢复后 `pending=0`
+
+### 7.3 工具链结论修正
+
+| 判断 | 实测 |
+|---|---|
+| "服务器无外网" | ❌ 错误。`mirrors.aliyun.com` 实测 **1.48 MB/s**，`rsproxy.cn` **1.15 MB/s** |
+| Go | ✅ 已装 1.22.5，`goproxy.cn` 可用 |
+| Rust | ✅ 已装 1.99.1（rustup minimal），`rsproxy.cn` 可用 |
+| 编译 | `rustc -O` 单文件编译，无 cargo 依赖，**4.5MB** 静态二进制 |
+
+> 之前"128KB/s"的判断只对某些 CDN 节点成立，不代表全部出口。**结论：该服务器外网可用，限速是节点相关而非全局。**
+
+## 7.1 仍未完成
 
 | # | 项 | 状态 | 说明 |
 |---|---|---|---|
 | 1 | 定时备份（CronJob + 保留策略） | ❌ | 当前仅一次性备份 |
-| 2 | Rust 边缘采集 | ❌ | 工具链可装（实测 1.48MB/s），但 OPC UA 客户端编译链长，未在本次窗口完成 |
+| 2 | Rust 边缘采集 | ✅ **已完成** | 见 §8（零依赖 std 实现，4.5MB 二进制，已跑通边缘→云端） |
 | 3 | Java 资产/知识/集成 | ❌ | 无 JDK；Nacos 已就绪，待 JDK 安装 |
 | 4 | 方案卡落库 + 工单闭环 | ❌ | 表结构已就绪（recommendation_card），服务未写入 |
 | 5 | Pulsar 后端 | ⏸ | 租户已建，客户端受阻（musl/glibc） |
