@@ -69,13 +69,18 @@ class AssetController {
         if (rows.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
+        // 注意：实际表名是 measurement_point（非 measure_point），
+        // 且列是 quantity/direction（非 axis）。曾因表名/列名与库不符
+        // 导致该接口恒 500（SQLException），由无头浏览器全链路测试发现。
         List<Map<String, Object>> mps = jdbc.queryForList(
-                "SELECT mp_id, axis, unit, sample_rate FROM measure_point "
-                        + "WHERE tenant_id=? AND mp_id LIKE ? LIMIT 50",
+                "SELECT mp_id, comp_id, quantity, direction, unit, sample_rate "
+                        + "FROM measurement_point "
+                        + "WHERE tenant_id=? AND mp_id LIKE ? ORDER BY mp_id LIMIT 50",
                 tenant, "%." + assetId + ".%");
         return ResponseEntity.ok(Map.of(
                 "asset", rows.get(0),
-                "measure_points", mps));
+                "measure_points", mps,
+                "measure_point_count", mps.size()));
     }
 
     /** 关键度分布（看板 KPI 用）。 */

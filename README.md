@@ -98,6 +98,17 @@
 | **18** | `docs/18_K8s资源诊断与TiKV修复报告.md` | 五层取证 · 根因树 · 修复与验证 | **v1.1 新增** |
 | **19** | `docs/19_全链路性能架构与技术栈.md` | Litestar+Granian · 多级缓存 · 实测基准 | **v1.1 新增** |
 | **20** | `docs/20_集群重构ADR_StatefulSet与本地PV.md` | Deployment→StatefulSet · 200Gi 本地 PV · 3T 规划 | **v1.2 新增** |
+| **21** | `docs/21_全链路测试报告与完成度.md` | E2E 基线 → 演进至 66 项 + 浏览器 46 项 | 已出 |
+| **22** | `docs/22_远端仓库同步记录.md` | Gitee / GitHub 双远端 | 已出 |
+| **23** | `docs/23_Ph2交付_备份决策MCP事件管线.md` | 备份 / 决策 / MCP / 事件 | 已出 |
+| **24** | `docs/24_Pulsar打通_定时备份_方案卡闭环_看板.md` | Pulsar 二进制协议 · CronJob · 工单闭环 · 看板 | 已出 |
+| **25** | `docs/25_剩余五项清零.md` | 备份清理 · Java 资产 · 看板鉴权 · Pulsar 消费者 | 已出 |
+| **26** | `docs/26_EAM集成_趋势图_TiDBOperator容量受阻.md` | Outbox 重试 · HI 趋势 · Operator 容量阻塞 | 已出 |
+| **27** | `docs/27_资源审查与TiDB迁移实录.md` | 全量资源审查 · 方案 C 尝试与回滚 | 已出 |
+| **28** | `docs/28_事故报告_共享TiDB数据丢失.md` | INC-01 · 备份范围盲区 | 已出 |
+| **29** | `docs/29_事故报告_pdm库被孤儿BR任务误删.md` | INC-02 · 后台任务生死判定 | 已出 |
+| **30** | `docs/30_课程平台数据回填完成报告.md` | 101,604,452 行 · 质量验证 · 7 个坑 | 已出 |
+| **31** | `docs/31_无头浏览器全端全链路测试报告.md` | 46/46 · 3 个真实缺陷 · 浏览器层价值 | **最新** |
 | — | `index-v2.html` | v1.0 评分与优化总览（汇报用） | **v1.0 新增** |
 
 ---
@@ -140,6 +151,31 @@
 | 访问入口 | `http://10.167.2.175:32231` + Host `pdm-api.10.167.2.175.nip.io` |
 | 实测响应 | `hi=59.45, level=orange, degraded=false`，五维分解齐全，每条带证据 |
 | 缓存 | L1 命中正常；**L2 已接 Redis（db 3），`l2_enabled=true`，键 `pdm:diag:*` 已写入** |
+| 健康看板 | `/pdm-api/dashboard`（Basic Auth），KPI + 热点设备 + 诊断分解 + HI 趋势图 + 方案卡一键确认 |
+| 资产服务 | `java-asset`（Spring Boot 3.3.5 + JDK 21）`/api/v1/assets`，列表/详情(含测点)/关键度统计 |
+| 事件与集成 | Pulsar 消费者投影读模型；EAM 出站 Outbox（指数退避 + 死信） |
+| 定时任务 | `tidb-backup`（每日 02:00，**全库 `BACKUP DATABASE *`**）+ `tidb-backup-prune`（03:30，保留 7 份） |
+
+### 3.10 测试现状（2026-10-23）
+
+| 层 | 覆盖 | 结果 |
+|---|---|---|
+| E2E（httpx） | Pulsar / 备份清理 / 方案卡多角色确认 / 趋势 API / EAM 重试 / 看板鉴权 | **66/66** |
+| **无头浏览器**（Playwright + Chromium） | 看板渲染 + 诊断/趋势/会诊三条交互路径 + JS 异常与资源加载 | **46/46** |
+| 单元测试 | 规则引擎 / 仓储 / 事件 | 72 项 |
+
+浏览器层抓出了 API 层测不到的 3 个缺陷（按钮函数名错绑、线上看板旧版、
+java-asset 表名错致 500），均已修复。详见
+[`docs/31_无头浏览器全端全链路测试报告.md`](docs/31_无头浏览器全端全链路测试报告.md)。
+
+复跑命令：
+
+```bash
+cd impl
+python tools/local_proxy.py &          # 注入 Host 头与看板凭据
+python tools/browser_e2e.py            # 46 项，输出 JSON + 截图
+PDM_DB_PASSWORD=*** python tools/e2e_test.py   # 66 项
+```
 
 ### 3.8 文档导出（Word / PDF）
 

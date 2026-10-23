@@ -46,3 +46,6 @@ Thumbs.db
 *.log
 *.tmp
 /tmp/
+
+# 浏览器测试运行产物（归档副本见 docs/shots）
+browser_test_shots/
