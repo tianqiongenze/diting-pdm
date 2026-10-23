@@ -79,11 +79,14 @@ async def integration_stats() -> dict[str, Any]:
         return {"error": str(exc)[:120]}
 
 
-@get("/dashboard")
-async def dashboard(request: Request) -> Any:
-    """健康看板（静态页，ConfigMap 挂载到 /app/static/dashboard.html）。
+# 前端页面白名单：文件名与 URL 路径同名，均从 ConfigMap 挂载的 /app/static 读取
+_PAGES = {"dashboard": "dashboard.html", "screen": "screen.html", "console": "console.html"}
 
-    鉴权：HTTP Basic Auth。账号密码由 PDM_DASHBOARD_USER / PDM_DASHBOARD_PASS
+
+def _serve_page(request: Request, page: str) -> Any:
+    """前端页面统一入口（Basic Auth + 静态文件）。
+
+    鉴权：HTTP Basic Auth，账号密码由 PDM_DASHBOARD_USER / PDM_DASHBOARD_PASS
     注入（K8s Secret）。未配置时拒绝访问（fail-closed，不提供匿名降级）。
     """
     user = os.getenv("PDM_DASHBOARD_USER", "")
@@ -97,14 +100,34 @@ async def dashboard(request: Request) -> Any:
                         media_type="text/html; charset=utf-8", status_code=401,
                         headers={"WWW-Authenticate": 'Basic realm="diting-pdm"'})
 
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "dashboard.html")
+    static = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+    path = os.path.join(static, _PAGES[page])
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fh:
             return Response(content=fh.read(), media_type="text/html; charset=utf-8")
     return Response(
-        content="<h3>dashboard not mounted</h3><p>ConfigMap pdm-dashboard 未挂载</p>",
+        content=f"<h3>{page} not mounted</h3><p>ConfigMap pdm-dashboard 缺少 "
+                f"{_PAGES[page]}</p>",
         media_type="text/html; charset=utf-8",
     )
+
+
+@get("/dashboard")
+async def dashboard(request: Request) -> Any:
+    """运营看板（浅色管理台入口，兼容旧链接）。"""
+    return _serve_page(request, "dashboard")
+
+
+@get("/screen")
+async def screen_page(request: Request) -> Any:
+    """大屏驾驶舱（深色，1920×1080 全屏投屏用）。"""
+    return _serve_page(request, "screen")
+
+
+@get("/console")
+async def console_page(request: Request) -> Any:
+    """管理台（多视图 SPA：看板/设备/工单/诊断）。"""
+    return _serve_page(request, "console")
 
 
 def _check_basic_auth(header: str, expect_user: str, expect_pass: str) -> bool:
@@ -426,7 +449,7 @@ async def _on_startup() -> None:
     events.init(os.getenv("PDM_REDIS_URL"))
 
 app = Litestar(
-    route_handlers=[healthz, version, cache_stats, events_stats, integration_stats, asset_trend, warmup_endpoint, diagnose_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard],
+    route_handlers=[healthz, version, cache_stats, events_stats, integration_stats, asset_trend, warmup_endpoint, diagnose_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard, screen_page, console_page],
     on_startup=[_on_startup],
     debug=os.getenv("PDM_ENV", "prod") != "prod",
 )

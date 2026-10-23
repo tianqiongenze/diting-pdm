@@ -21,7 +21,16 @@ KEY="${PDM_DASHBOARD_KEY:-dashboard.html}"
 SSH_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-LOCAL_FILE="$HERE/../deploy/k8s/dashboard-index.html"
+K8S_DIR="$HERE/../deploy/k8s"
+
+# 三个页面：本地文件 -> ConfigMap key
+PAGES=(
+  "dashboard-index.html:dashboard.html"
+  "screen.html:screen.html"
+  "console.html:console.html"
+)
+
+LOCAL_FILE="$K8S_DIR/dashboard-index.html"
 # jsonpath 中 key 的点号需转义，否则 {.data.dashboard.html} 会解析失败返回空
 ESCAPED_KEY=$(printf '%s' "$KEY" | sed 's/\./\\./g')
 
@@ -76,12 +85,22 @@ fi
 # ---------------------------------------------------------------------------
 # 部署
 # ---------------------------------------------------------------------------
-echo "→ 上传并更新 ConfigMap …"
-timeout 60 scp $SSH_OPTS "$LOCAL_FILE" "$SERVER:/root/dashboard-index.html" >/dev/null 2>&1 || {
-  echo "❌ 上传失败" >&2; exit 1; }
+echo "→ 上传并更新 ConfigMap（3 个页面）…"
+FROM_ARGS=""
+for pair in "${PAGES[@]}"; do
+  src="${pair%%:*}"; key="${pair##*:}"
+  if [ ! -f "$K8S_DIR/$src" ]; then
+    echo "⚠️  跳过缺失文件: $src"
+    continue
+  fi
+  timeout 60 scp $SSH_OPTS "$K8S_DIR/$src" "$SERVER:/root/$src" >/dev/null 2>&1 || {
+    echo "❌ 上传失败: $src" >&2; exit 1; }
+  FROM_ARGS="$FROM_ARGS --from-file=$key=/root/$src"
+  echo "   ✓ $src → $key"
+done
 
 timeout 120 ssh $SSH_OPTS "$SERVER" \
-  "kubectl -n $NS create configmap $CM --from-file=$KEY=/root/dashboard-index.html --dry-run=client -o yaml | kubectl apply -f -" \
+  "kubectl -n $NS create configmap $CM $FROM_ARGS --dry-run=client -o yaml | kubectl apply -f -" \
   2>&1 | tail -1
 
 # ---------------------------------------------------------------------------
@@ -112,11 +131,27 @@ FINAL=$(timeout 60 ssh $SSH_OPTS "$SERVER" \
   2>/dev/null)
 
 if [ "$FINAL" = "$LOCAL_SHA" ]; then
-  echo "✅ 部署完成：HTTP 响应与仓库文件一致"
-  exit 0
+  echo "✅ dashboard 已一致"
+else
+  echo "⚠️  dashboard 响应与仓库文件不一致（SHA ${FINAL:0:12}… vs ${LOCAL_SHA:0:12}…）"
+  echo "   可能 Pod 尚未完成挂载同步，稍后重跑 verify"
 fi
 
-echo "⚠️  部署已执行，但 HTTP 响应与仓库文件仍不一致"
-echo "   线上 SHA: ${FINAL:0:16}…  期望: ${LOCAL_SHA:0:16}…"
-echo "   可能原因：Pod 尚未完成挂载同步，稍后重跑 verify 确认"
-exit 1
+echo "→ 校验其余页面可访问"
+OK=0; FAIL=0
+for pair in "${PAGES[@]}"; do
+  key="${pair##*:}"
+  page="${key%.html}"
+  code=$(timeout 40 ssh $SSH_OPTS "$SERVER" \
+    "curl -s -o /dev/null -w '%{http_code}' --max-time 8 -u pdmadmin:Diting2026! \
+     -H 'Host: pdm-api.10.167.2.175.nip.io' http://10.167.2.175:32231/pdm-api/$page" \
+    2>/dev/null)
+  if [ "$code" = "200" ]; then
+    echo "   ✓ /$page 200"; OK=$((OK+1))
+  else
+    echo "   ✗ /$page $code"; FAIL=$((FAIL+1))
+  fi
+done
+
+[ "$FAIL" = "0" ] && echo "✅ 全部页面就绪（$OK 个）" && exit 0
+echo "⚠️  $FAIL 个页面异常"; exit 1

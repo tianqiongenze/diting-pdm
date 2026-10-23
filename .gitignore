@@ -49,3 +49,6 @@ Thumbs.db
 
 # 浏览器测试运行产物（归档副本见 docs/shots）
 browser_test_shots/
+
+# 前端审查临时截图（归档副本见 docs/shots）
+review/

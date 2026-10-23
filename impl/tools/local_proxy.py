@@ -34,9 +34,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         print(f"[proxy] {self.address_string()} {fmt % args}", flush=True)
 
     def _proxy(self) -> None:
-        # Ingress 的路径规则带 /pdm-api 前缀，本地访问不带，这里补上
+        # Ingress 的路径规则带 /pdm-api 与 /pdm-asset 前缀，本地访问可能不带，
+        # 这里按需补齐；已带前缀的直接透传。
         path = self.path
-        if not path.startswith("/pdm-api"):
+        if not (path.startswith("/pdm-api") or path.startswith("/pdm-asset")):
             path = "/pdm-api" + (path if path.startswith("/") else "/" + path)
         url = UPSTREAM + path
         body = None

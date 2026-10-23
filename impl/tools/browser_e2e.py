@@ -329,12 +329,98 @@ def test_java() -> None:
     c.close()
 
 
+# ---------------------------------------------------------------------------
+# D. 新增前端页面（大屏 / 管理台）
+# ---------------------------------------------------------------------------
+def test_screen(pw) -> None:
+    print("\n===== D1. 大屏驾驶舱 =====", flush=True)
+    browser = pw.chromium.launch(executable_path=CHROME, headless=True,
+                                 args=["--no-sandbox", "--disable-dev-shm-usage"])
+    page = browser.new_page(viewport={"width": 1920, "height": 1080})
+    bad: list[str] = []
+    js: list[str] = []
+    page.on("response", lambda r: bad.append(f"{r.status} {r.url}") if r.status >= 400 else None)
+    page.on("pageerror", lambda e: js.append(str(e)[:100]))
+
+    page.goto(f"{BASE}/screen", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(5500)
+    check("D1.1 大屏标题", "驾驶舱" in page.title(), page.title())
+
+    info = page.evaluate("""() => ({
+      ring: document.querySelectorAll('#ring circle').length,
+      legend: document.getElementById('legend')?.children.length || 0,
+      cells: document.querySelectorAll('.mx-cell').length,
+      bars: document.querySelectorAll('.bar-row').length,
+      feed: document.querySelectorAll('.ev').length,
+      ticker: document.querySelectorAll('.tk-item').length,
+      svg: document.querySelectorAll('svg').length,
+      scrollW: document.documentElement.scrollWidth,
+    })""")
+    check("D1.2 环形图已绘制", info["ring"] >= 2, f"{info['ring']} 段弧")
+    check("D1.3 四级图例齐全", info["legend"] == 4, f"{info['legend']} 项")
+    check("D1.4 健康矩阵有点阵", info["cells"] > 50, f"{info['cells']} 格")
+    check("D1.5 关键度条形", info["bars"] >= 1, f"{info['bars']} 条")
+    check("D1.6 事件流有内容", info["feed"] >= 1, f"{info['feed']} 条")
+    check("D1.7 告警滚动条", info["ticker"] >= 2, f"{info['ticker']} 项")
+    check("D1.8 SVG 图表 ≥2 类", info["svg"] >= 2, f"{info['svg']} 个")
+    check("D1.9 1920 宽无横向滚动", info["scrollW"] <= 1920, f"scrollW={info['scrollW']}")
+    real_bad = [b for b in bad if "favicon" not in b.lower()]
+    check("D1.10 无资源加载失败", not real_bad, "; ".join(real_bad[:2])[:100])
+    check("D1.11 无 JS 异常", not js, "; ".join(js[:2])[:100])
+    shot(page, "D1_screen")
+    browser.close()
+
+
+def test_console(pw) -> None:
+    print("\n===== D2. 管理台多视图 =====", flush=True)
+    browser = pw.chromium.launch(executable_path=CHROME, headless=True,
+                                 args=["--no-sandbox", "--disable-dev-shm-usage"])
+    page = browser.new_page(viewport={"width": 1600, "height": 1000})
+    bad: list[str] = []
+    js: list[str] = []
+    page.on("response", lambda r: bad.append(f"{r.status} {r.url}") if r.status >= 400 else None)
+    page.on("pageerror", lambda e: js.append(str(e)[:100]))
+
+    views = [("dashboard", "运营看板", "#kpis .kpi"),
+             ("assets", "设备台账", "#asset-rows tr"),
+             ("cards", "工单看板", ".kcol"),
+             ("diagnose", "诊断工作台", "#radar-box svg")]
+    for slug, name, sel in views:
+        page.goto(f"{BASE}/console#/{slug}", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(3800)
+        n = page.locator(sel).count()
+        check(f"D2 {name} 渲染", n > 0, f"{sel} x{n}")
+        check(f"D2 {name} 标题", name in page.title(), page.title())
+
+    # 诊断台自动加载（进入即出结果，不留空态）
+    page.goto(f"{BASE}/console#/diagnose", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(4500)
+    ev = page.locator("#ev-list .ev-item").count()
+    check("D2.5 诊断台自动出证据", ev >= 1, f"{ev} 条")
+    radar_pts = page.evaluate(
+        "() => document.querySelectorAll('#radar-box polygon').length")
+    check("D2.6 雷达图五维成型", radar_pts >= 5, f"{radar_pts} 个多边形")
+
+    page.goto(f"{BASE}/console#/cards", wait_until="domcontentloaded", timeout=20000)
+    page.wait_for_timeout(1500)
+    on = page.locator(".nav a.on").count()
+    check("D2.7 侧导航高亮当前项", on == 1, f"{on} 个高亮")
+    shot(page, "D2_console")
+
+    real_bad = [b for b in bad if "favicon" not in b.lower()]
+    check("D2.8 无资源加载失败", not real_bad, "; ".join(real_bad[:2])[:100])
+    check("D2.9 无 JS 异常", not js, "; ".join(js[:2])[:100])
+    browser.close()
+
+
 def main() -> None:
     t0 = time.time()
     print(f"谛听 PdM 全端全链路功能测试 · {datetime.now():%Y-%m-%d %H:%M:%S}", flush=True)
 
     with sync_playwright() as pw:
         test_dashboard(pw)
+        test_screen(pw)
+        test_console(pw)
     test_api()
     test_java()
 

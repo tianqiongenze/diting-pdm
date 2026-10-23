@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>谛听 PdM · 设备健康驾驶舱</title>
+<style>
+/* ===== 设计系统 · 深色大屏主题 ===== */
+:root{
+  --bg-0:#050810; --bg-1:#0A1120; --bg-2:#0E1728;
+  --panel:rgba(14,23,40,.72); --panel-2:rgba(20,32,52,.55);
+  --line:rgba(56,189,248,.14); --line-2:rgba(56,189,248,.26);
+  --txt:#E8F0FB; --txt-2:#94A7C2; --txt-3:#5C7089;
+  --cyan:#38BDF8; --cyan-d:#0EA5E9; --violet:#8B5CF6;
+  --red:#F43F5E; --orange:#FB923C; --yellow:#FACC15; --green:#22C55E;
+  --glow-c:0 0 24px rgba(56,189,248,.35);
+  --r-s:6px; --r-m:10px; --r-l:14px;
+  --f-num:"SF Mono","JetBrains Mono",Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
+body{
+  background:
+    radial-gradient(1200px 700px at 12% -10%, rgba(14,165,233,.10), transparent 60%),
+    radial-gradient(900px 600px at 88% 110%, rgba(139,92,246,.09), transparent 60%),
+    linear-gradient(180deg,var(--bg-0),var(--bg-1) 40%,var(--bg-0));
+  color:var(--txt);
+  font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  font-feature-settings:"tnum";
+}
+/* 网格背景 */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    linear-gradient(rgba(56,189,248,.035) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(56,189,248,.035) 1px,transparent 1px);
+  background-size:56px 56px;
+  mask-image:radial-gradient(circle at 50% 40%,#000 30%,transparent 78%);
+}
+.wrap{position:relative;z-index:1;height:100vh;display:flex;flex-direction:column;padding:0 18px 12px}
+
+/* ===== 顶部 ===== */
+header{
+  height:76px;flex:0 0 76px;display:flex;align-items:center;justify-content:space-between;
+  position:relative;
+}
+header::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(56,189,248,.5),rgba(139,92,246,.4),transparent);
+}
+.brand{display:flex;align-items:center;gap:14px}
+.logo{
+  width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+  background:linear-gradient(135deg,rgba(56,189,248,.22),rgba(139,92,246,.18));
+  border:1px solid rgba(56,189,248,.35);box-shadow:var(--glow-c);
+  font-weight:800;font-size:19px;color:var(--cyan);letter-spacing:-1px;
+}
+h1{font-size:23px;font-weight:650;letter-spacing:.5px;
+   background:linear-gradient(92deg,#fff,#BAE6FD 60%,#A5B4FC);
+   -webkit-background-clip:text;background-clip:text;color:transparent}
+.brand .sub{font-size:11.5px;color:var(--txt-3);letter-spacing:2.2px;text-transform:uppercase;margin-top:1px}
+.head-right{display:flex;align-items:center;gap:22px}
+.led{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--txt-2)}
+.led i{width:7px;height:7px;border-radius:50%;background:var(--green);
+       box-shadow:0 0 10px var(--green);animation:pulse 2.2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}
+.clock{font-family:var(--f-num);font-size:21px;color:var(--cyan);letter-spacing:1px;
+       text-shadow:0 0 16px rgba(56,189,248,.5)}
+.clock small{font-size:11px;color:var(--txt-3);margin-left:8px;letter-spacing:0}
+.icon-btn{
+  width:34px;height:34px;border-radius:9px;border:1px solid var(--line);
+  background:var(--panel-2);color:var(--txt-2);cursor:pointer;
+  display:grid;place-items:center;transition:.18s;
+}
+.icon-btn:hover{color:var(--cyan);border-color:var(--line-2);background:rgba(56,189,248,.08)}
+.navlink{
+  font-size:12.5px;color:var(--txt-2);text-decoration:none;padding:6px 12px;
+  border-radius:8px;border:1px solid var(--line);transition:.18s;
+}
+.navlink:hover{color:var(--cyan);border-color:var(--line-2);background:rgba(56,189,248,.07)}
+
+/* ===== 栅格 ===== */
+.grid{
+  flex:1;min-height:0;display:grid;gap:14px;
+  grid-template-columns:minmax(300px,22%) 1fr minmax(300px,22%);
+  padding-top:14px;
+}
+.col{display:flex;flex-direction:column;gap:14px;min-height:0}
+.col.mid{display:grid;grid-template-rows:1.45fr 1fr;gap:14px}
+
+/* ===== 面板 ===== */
+.panel{
+  position:relative;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-l);padding:14px 16px;min-height:0;
+  backdrop-filter:blur(10px);
+  display:flex;flex-direction:column;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.035),0 8px 26px rgba(0,0,0,.28);
+}
+/* 四角切角装饰 */
+.panel::before,.panel::after{
+  content:"";position:absolute;width:12px;height:12px;pointer-events:none;
+  border-color:var(--cyan);opacity:.55;
+}
+.panel::before{top:-1px;left:-1px;border-top:2px solid;border-left:2px solid;border-radius:var(--r-l) 0 0 0}
+.panel::after{bottom:-1px;right:-1px;border-bottom:2px solid;border-right:2px solid;border-radius:0 0 var(--r-l) 0}
+.panel h2{
+  font-size:13px;font-weight:600;color:var(--txt);letter-spacing:.4px;
+  display:flex;align-items:center;gap:9px;margin-bottom:12px;flex:0 0 auto;
+}
+.panel h2::before{
+  content:"";width:3px;height:13px;border-radius:2px;
+  background:linear-gradient(180deg,var(--cyan),var(--violet));
+  box-shadow:0 0 10px rgba(56,189,248,.6);
+}
+.panel h2 .tag{
+  margin-left:auto;font-size:11px;color:var(--txt-3);font-weight:400;letter-spacing:0;
+}
+.body{flex:1;min-height:0;position:relative}
+
+/* ===== KPI 环 ===== */
+.kpi-ring{display:flex;align-items:center;gap:16px}
+.ring-box{position:relative;width:150px;height:150px;flex:0 0 150px}
+.ring-box svg{transform:rotate(-90deg)}
+.ring-center{
+  position:absolute;inset:0;display:grid;place-content:center;text-align:center;
+}
+.ring-center .big{font-family:var(--f-num);font-size:34px;font-weight:700;line-height:1;
+                color:#fff;text-shadow:0 0 22px rgba(56,189,248,.45)}
+.ring-center .lbl{font-size:11px;color:var(--txt-3);margin-top:5px;letter-spacing:1px}
+.legend{display:flex;flex-direction:column;gap:9px;flex:1}
+.lg{display:flex;align-items:center;gap:9px;font-size:12.5px}
+.lg i{width:9px;height:9px;border-radius:3px;flex:0 0 auto}
+.lg .n{margin-left:auto;font-family:var(--f-num);font-size:15px;font-weight:600}
+.lg .p{font-size:11px;color:var(--txt-3);width:38px;text-align:right}
+
+/* ===== 统计小卡 ===== */
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{
+  background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-m);
+  padding:11px 13px;position:relative;overflow:hidden;
+}
+.stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--cyan);opacity:.7}
+.stat .k{font-size:11.5px;color:var(--txt-3);letter-spacing:.3px}
+.stat .v{font-family:var(--f-num);font-size:24px;font-weight:700;margin-top:3px;line-height:1.1}
+.stat .u{font-size:11px;color:var(--txt-3);margin-left:4px;font-weight:400}
+.stat.r::before{background:var(--red)} .stat.r .v{color:var(--red)}
+.stat.o::before{background:var(--orange)} .stat.o .v{color:var(--orange)}
+.stat.g::before{background:var(--green)} .stat.g .v{color:var(--green)}
+.stat.c::before{background:var(--cyan)} .stat.c .v{color:var(--cyan)}
+
+/* ===== 健康矩阵 ===== */
+.matrix{display:flex;flex-direction:column;gap:10px;height:100%}
+.mx-grid{
+  flex:1;display:grid;gap:5px;align-content:center;overflow:hidden;
+  grid-template-columns:repeat(auto-fill,minmax(17px,1fr));
+}
+.mx-cell{
+  aspect-ratio:1;border-radius:3.5px;background:rgba(148,167,194,.10);
+  transition:.22s;cursor:pointer;position:relative;
+  border:1px solid rgba(148,167,194,.08);
+}
+.mx-cell:hover{transform:scale(1.5);z-index:5;box-shadow:0 0 14px currentColor}
+.mx-cell.red{background:var(--red);border-color:transparent;box-shadow:0 0 8px rgba(244,63,94,.6)}
+.mx-cell.orange{background:var(--orange);border-color:transparent;box-shadow:0 0 8px rgba(251,146,60,.55)}
+.mx-cell.yellow{background:var(--yellow);border-color:transparent;box-shadow:0 0 7px rgba(250,204,21,.5)}
+.mx-cell.green{background:var(--green);border-color:transparent;box-shadow:0 0 6px rgba(34,197,94,.45)}
+.mx-foot{display:flex;gap:16px;font-size:11px;color:var(--txt-3);flex:0 0 auto}
+.mx-foot span{display:flex;align-items:center;gap:5px}
+.mx-foot i{width:8px;height:8px;border-radius:2px}
+
+/* ===== 条形分布 ===== */
+.bars{display:flex;flex-direction:column;gap:14px;justify-content:center;height:100%}
+.bars .ov{
+  display:flex;align-items:baseline;gap:10px;padding-bottom:11px;margin-bottom:2px;
+  border-bottom:1px dashed rgba(56,189,248,.14);
+}
+.bars .ov .big{font-family:var(--f-num);font-size:30px;font-weight:700;color:#fff;
+               line-height:1;text-shadow:0 0 20px rgba(56,189,248,.4)}
+.bars .ov .lb{font-size:11.5px;color:var(--txt-3)}
+.bars .ov .a{margin-left:auto;font-size:11.5px;color:var(--txt-3);text-align:right;line-height:1.5}
+.bars .ov .a b{font-family:var(--f-num);font-size:14px;color:var(--red)}
+.bar-row{display:flex;align-items:center;gap:11px}
+.bar-row .lb{width:52px;font-size:12px;color:var(--txt-2);flex:0 0 auto}
+.bar-track{flex:1;height:10px;border-radius:5px;background:rgba(148,167,194,.13);overflow:hidden}
+.bar-fill{height:100%;border-radius:5px;transition:width .9s cubic-bezier(.22,1,.36,1)}
+.bar-row .vl{font-family:var(--f-num);font-size:13px;width:66px;text-align:right;flex:0 0 auto}
+.bar-row .vl em{font-size:10px;color:var(--txt-3);font-style:normal;margin-left:3px}
+
+/* ===== 方案卡列表 ===== */
+.cards{display:flex;flex-direction:column;gap:8px;overflow-y:auto;height:100%;padding-right:2px}
+.cards::-webkit-scrollbar{width:4px}
+.cards::-webkit-scrollbar-thumb{background:rgba(56,189,248,.3);border-radius:2px}
+.card{
+  background:var(--panel-2);border:1px solid var(--line);border-left:2px solid var(--cyan);
+  border-radius:var(--r-m);padding:9px 11px;transition:.18s;flex:0 0 auto;
+}
+.card:hover{background:rgba(56,189,248,.07);border-color:var(--line-2)}
+.card.act{border-left-color:var(--red)}
+.card.mon{border-left-color:var(--yellow)}
+.card .top{display:flex;align-items:center;gap:8px;font-size:12px}
+.card .id{font-family:var(--f-num);color:var(--cyan);font-size:11.5px}
+.card .as{margin-left:auto;color:var(--txt-3);font-size:11px}
+.card .cc{margin-top:5px;font-size:11.5px;color:var(--txt-2);line-height:1.45;
+          display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.chip{
+  font-size:10.5px;padding:1.5px 7px;border-radius:999px;letter-spacing:.2px;
+  border:1px solid transparent;
+}
+.chip.act{background:rgba(244,63,94,.16);color:#FDA4AF;border-color:rgba(244,63,94,.35)}
+.chip.mon{background:rgba(250,204,21,.13);color:#FDE68A;border-color:rgba(250,204,21,.3)}
+.chip.ok{background:rgba(34,197,94,.14);color:#86EFAC;border-color:rgba(34,197,94,.3)}
+
+/* ===== 事件流 ===== */
+.feed{display:flex;flex-direction:column;gap:0;height:100%;overflow-y:auto}
+.feed::-webkit-scrollbar{width:4px}
+.feed::-webkit-scrollbar-thumb{background:rgba(56,189,248,.3);border-radius:2px}
+.ev{display:flex;gap:9px;padding:7px 0;border-bottom:1px dashed rgba(56,189,248,.1);font-size:11.5px}
+.ev:last-child{border-bottom:0}
+.ev .t{font-family:var(--f-num);color:var(--txt-3);flex:0 0 54px}
+.ev .dot{width:6px;height:6px;border-radius:50%;margin-top:5px;flex:0 0 auto}
+.ev .x{flex:1;color:var(--txt-2);line-height:1.4}
+
+/* ===== 空状态 ===== */
+.empty{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:9px;color:var(--txt-3);
+}
+.empty svg{opacity:.32}
+.empty .t{font-size:12.5px}
+.empty .s{font-size:11px;opacity:.7}
+
+/* ===== 滚动告警 ===== */
+.ticker{
+  flex:0 0 44px;height:44px;margin-top:12px;border-radius:var(--r-m);
+  border:1px solid var(--line);background:linear-gradient(90deg,rgba(244,63,94,.1),rgba(14,23,40,.6) 30%,rgba(14,23,40,.6) 70%,rgba(251,146,60,.08));
+  display:flex;align-items:center;overflow:hidden;position:relative;
+}
+.ticker .hd{
+  flex:0 0 auto;padding:0 14px;height:100%;display:flex;align-items:center;gap:7px;
+  font-size:12px;color:#FDA4AF;border-right:1px solid var(--line);letter-spacing:.5px;
+}
+.ticker .hd i{width:6px;height:6px;border-radius:50%;background:var(--red);
+              box-shadow:0 0 9px var(--red);animation:pulse 1.6s infinite}
+.tk-view{flex:1;overflow:hidden;position:relative;height:100%}
+.tk-track{
+  position:absolute;white-space:nowrap;display:flex;align-items:center;height:100%;
+  animation:scrollx 42s linear infinite;will-change:transform;
+}
+.tk-track:hover{animation-play-state:paused}
+@keyframes scrollx{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.tk-item{font-size:12.5px;color:var(--txt-2);padding-right:44px;display:inline-flex;align-items:center;gap:7px}
+.tk-item b{color:#FDA4AF;font-family:var(--f-num);font-weight:600}
+.tk-item em{color:var(--txt-3);font-style:normal}
+
+/* ===== 加载 ===== */
+.loading{display:flex;align-items:center;gap:8px;color:var(--txt-3);font-size:12px}
+.spin{width:13px;height:13px;border:2px solid rgba(56,189,248,.25);border-top-color:var(--cyan);
+      border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ===== 响应式 ===== */
+@media (max-width:1500px){
+  .grid{grid-template-columns:minmax(260px,24%) 1fr minmax(260px,24%)}
+  .ring-box{width:126px;height:126px;flex-basis:126px}
+  .ring-center .big{font-size:28px}
+}
+@media (max-height:820px){
+  header{height:64px;flex-basis:64px}
+  .panel{padding:11px 13px}
+  .panel h2{margin-bottom:9px;font-size:12px}
+  .ring-box{width:118px;height:118px;flex-basis:118px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="logo">谛</div>
+      <div>
+        <h1>谛听 PdM · 设备健康驾驶舱</h1>
+        <div class="sub">Predictive Maintenance Command Center</div>
+      </div>
+    </div>
+    <div class="head-right">
+      <div class="led"><i></i><span id="transport">事件总线</span></div>
+      <div class="clock" id="clock">--:--:--</div>
+      <a class="navlink" href="console">管理台 →</a>
+      <button class="icon-btn" id="fs" title="全屏">⛶</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- 左列 -->
+    <div class="col">
+      <div class="panel" style="flex:0 0 auto">
+        <h2>健康指数分布<span class="tag" id="total-tag">—</span></h2>
+        <div class="body" style="flex:0 0 auto">
+          <div class="kpi-ring">
+            <div class="ring-box">
+              <svg width="150" height="150" viewBox="0 0 150 150" id="ring"></svg>
+              <div class="ring-center">
+                <div class="big" id="ring-big">—</div>
+                <div class="lbl">在监设备</div>
+              </div>
+            </div>
+            <div class="legend" id="legend"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="flex:0 0 auto">
+        <h2>运行概览</h2>
+        <div class="body" style="flex:0 0 auto">
+          <div class="stats">
+            <div class="stat r"><div class="k">需立即处置</div><div class="v" id="s-red">—</div></div>
+            <div class="stat o"><div class="k">计划检修</div><div class="v" id="s-orange">—</div></div>
+            <div class="stat c"><div class="k">待确认工单</div><div class="v" id="s-pending">—</div></div>
+            <div class="stat g"><div class="k">已闭环工单</div><div class="v" id="s-done">—</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="flex:1">
+        <h2>关键度构成<span class="tag">A 类优先</span></h2>
+        <div class="body"><div class="bars" id="bars"></div></div>
+      </div>
+    </div>
+
+    <!-- 中列 -->
+    <div class="col mid">
+      <div class="panel">
+        <h2>设备健康矩阵<span class="tag" id="mx-tag">—</span></h2>
+        <div class="body">
+          <div class="matrix">
+            <div class="mx-grid" id="matrix"></div>
+            <div class="mx-foot">
+              <span><i style="background:var(--red)"></i>红</span>
+              <span><i style="background:var(--orange)"></i>橙</span>
+              <span><i style="background:var(--yellow)"></i>黄</span>
+              <span><i style="background:var(--green)"></i>绿</span>
+              <span><i style="background:rgba(148,167,194,.14)"></i>无数据</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>健康指数趋势<span class="tag" id="trend-tag">—</span></h2>
+        <div class="body" id="trend-wrap">
+          <div class="empty" id="trend-empty">
+            <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+              <path d="M3 17l5-6 4 4 6-8 3 4"/><path d="M3 21h18"/>
+            </svg>
+            <div class="t">选择设备查看 HI 走势</div>
+            <div class="s">在管理台点击「趋势」，或等待自动加载</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右列 -->
+    <div class="col">
+      <div class="panel" style="flex:1.1">
+        <h2>方案卡 · 工单闭环<span class="tag" id="cards-tag">—</span></h2>
+        <div class="body"><div class="cards" id="cards"></div></div>
+      </div>
+      <div class="panel" style="flex:1">
+        <h2>实时事件</h2>
+        <div class="body"><div class="feed" id="feed"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ticker">
+    <div class="hd"><i></i>重点告警</div>
+    <div class="tk-view"><div class="tk-track" id="ticker"></div></div>
+  </div>
+</div>
+
+<script>
+/* ===== 基础 ===== */
+const BASE = location.pathname.replace(/\/screen\/?$/, '') || '';
+const $ = id => document.getElementById(id);
+const LV = {red:'红色', orange:'橙色', yellow:'黄色', green:'绿色'};
+const LVC = {red:'#F43F5E', orange:'#FB923C', yellow:'#FACC15', green:'#22C55E'};
+const TENANT = localStorage.getItem('pdm.tenant') || 'site-a';
+
+function hdr(extra={}){
+  return Object.assign({'Content-Type':'application/json','X-Tenant-Id':TENANT}, extra);
+}
+async function api(path, opts={}){
+  try{
+    const r = await fetch(BASE + path, Object.assign({headers:hdr()}, opts));
+    const t = await r.text();
+    try{ return JSON.parse(t); }catch{ return {_raw:t, _status:r.status}; }
+  }catch(e){ return {_err:String(e)}; }
+}
+async function mcp(name, args){
+  const r = await api('/mcp', {method:'POST', body:JSON.stringify({
+    jsonrpc:'2.0', id:1, method:'tools/call', params:{name, arguments:args||{}}
+  })});
+  try{ return JSON.parse(r.result.content[0].text); }catch(e){ return null; }
+}
+/* java-asset 挂在独立 Ingress 前缀 /pdm-asset 下 */
+async function fetchAsset(path){
+  const root = BASE.replace(/\/pdm-api$/, '') + '/pdm-asset';
+  try{
+    const r = await fetch(root + path, {headers: hdr()});
+    return await r.json();
+  }catch(e){ return null; }
+}
+
+/* ===== 时钟 ===== */
+function tick(){
+  const d = new Date();
+  const p = n => String(n).padStart(2,'0');
+  $('clock').innerHTML = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+    + `<small>${d.getMonth()+1}/${d.getDate()} 周${'日一二三四五六'[d.getDay()]}</small>`;
+}
+setInterval(tick, 1000); tick();
+
+$('fs').onclick = () => {
+  if(!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+};
+
+/* ===== 环形图 ===== */
+function drawRing(counts, total){
+  const size=150, r=62, cx=75, cy=75, w=13;
+  const C = 2*Math.PI*r;
+  const order = ['red','orange','yellow','green'];
+  let acc = 0, svg = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none"
+      stroke="rgba(148,167,194,.12)" stroke-width="${w}"/>`;
+  order.forEach(k=>{
+    const v = counts[k]||0;
+    if(!v) return;
+    const len = total ? (v/total)*C : 0;
+    svg += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${LVC[k]}"
+      stroke-width="${w}" stroke-linecap="round"
+      stroke-dasharray="${len} ${C-len}" stroke-dashoffset="${-acc}"
+      style="filter:drop-shadow(0 0 6px ${LVC[k]}88);transition:stroke-dasharray .8s ease"/>`;
+    acc += len;
+  });
+  $('ring').innerHTML = svg;
+
+  const withData = order.reduce((s,k)=>s+(counts[k]||0),0);
+  $('ring-big').textContent = withData || '—';
+  $('total-tag').textContent = `共 ${total} 台在监`;
+
+  $('legend').innerHTML = order.map(k=>{
+    const v = counts[k]||0;
+    const pct = withData ? (v/withData*100).toFixed(1) : '0.0';
+    return `<div class="lg">
+      <i style="background:${LVC[k]};box-shadow:0 0 8px ${LVC[k]}88"></i>
+      <span style="color:var(--txt-2)">${LV[k]}</span>
+      <span class="n" style="color:${v?LVC[k]:'var(--txt-3)'}">${v}</span>
+      <span class="p">${pct}%</span>
+    </div>`;
+  }).join('');
+}
+
+/* ===== 矩阵 ===== */
+function drawMatrix(assets){
+  const grid = $('matrix');
+  /* 按等级排序：有问题的排前面，避免彩色点被灰块淹没 */
+  const rank = {red:0, orange:1, yellow:2, green:3};
+  const sorted = [...assets].sort((a,b)=>{
+    const ra = rank[a.level] ?? 9, rb = rank[b.level] ?? 9;
+    if(ra !== rb) return ra - rb;
+    return (a.hi ?? 999) - (b.hi ?? 999);
+  });
+  const cells = sorted.slice(0, 180);
+  grid.innerHTML = cells.map(a=>{
+    const lv = a.level || '';
+    const hi = (a.hi===null||a.hi===undefined) ? '无健康度' : `HI ${Number(a.hi).toFixed(1)}`;
+    return `<div class="mx-cell ${lv}" title="${a.asset_id} · ${hi} · ${a.criticality||'-'} 类"></div>`;
+  }).join('');
+  const bad = sorted.filter(a=>a.level==='red'||a.level==='orange').length;
+  $('mx-tag').textContent = bad
+    ? `${bad} 台异常置顶 · 抽样 ${cells.length}/${assets.length}`
+    : `抽样 ${cells.length} / ${assets.length} 台`;
+}
+
+/* ===== 条形 ===== */
+function drawBars(dist){
+  const total = dist.reduce((s,x)=>s+x.n,0) || 1;
+  const color = {A:'var(--red)', B:'var(--orange)', C:'var(--cyan)', D:'var(--txt-3)'};
+  const aPct = (100*(dist.find(d=>d.criticality==='A')?.n||0)/total).toFixed(1);
+  const ov = `<div class="ov">
+      <span class="big">${total}</span>
+      <span class="lb">台设备</span>
+      <span class="a">A 类占比<br><b>${aPct}%</b></span>
+    </div>`;
+  $('bars').innerHTML = ov + dist.map(x=>{
+    const pct = (x.n/total*100);
+    const c = color[x.criticality] || 'var(--cyan)';
+    return `<div class="bar-row">
+      <span class="lb">${x.criticality} 类</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;
+        background:linear-gradient(90deg,${c}44,${c})"></div></div>
+      <span class="vl" style="color:${c}">${x.n}<em>${pct.toFixed(0)}%</em></span>
+    </div>`;
+  }).join('');
+}
+
+/* ===== 趋势图（支持多设备对比） ===== */
+const TREND_COLORS = ['#38BDF8', '#A78BFA', '#34D399'];
+
+function drawTrend(lines){
+  /* lines: [{asset, series}] */
+  const wrap = $('trend-wrap');
+  const W = wrap.clientWidth || 640, H = wrap.clientHeight || 220;
+  const valid = (lines||[]).filter(l=>l.series && l.series.length);
+  if(!valid.length) return;
+
+  const P = {l:36, r:14, t:14, b:24};
+  const maxLen = Math.max(...valid.map(l=>l.series.length));
+  const xs = i => P.l + i*(W-P.l-P.r)/Math.max(1, maxLen-1);
+  const ys = v => H-P.b - (v/100)*(H-P.t-P.b);
+
+  const grid = [0,25,50,75,100].map(v=>{
+    const y = ys(v).toFixed(1);
+    return `<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="rgba(56,189,248,.09)"/>
+      <text x="6" y="${(+y+3.5).toFixed(1)}" font-size="9.5" fill="#5C7089">${v}</text>`;
+  }).join('');
+
+  let paths = '', legend = '';
+  valid.forEach((l, idx)=>{
+    const c = TREND_COLORS[idx % TREND_COLORS.length];
+    const s = l.series;
+    const path = s.map((p,i)=>`${i?'L':'M'}${xs(i).toFixed(1)},${ys(p.hi).toFixed(1)}`).join(' ');
+    /* 数据方差很小时不铺面积，否则整屏一大块纯色，视觉沉重且无信息量 */
+    const his = s.map(p=>p.hi);
+    const spread = Math.max(...his) - Math.min(...his);
+    if(spread >= 4){
+      const area = path + ` L${xs(s.length-1).toFixed(1)},${H-P.b} L${xs(0).toFixed(1)},${H-P.b} Z`;
+      paths += `<path d="${area}" fill="${c}" fill-opacity=".10"/>`;
+    }
+    paths += `<path d="${path}" fill="none" stroke="${c}" stroke-width="2"
+      stroke-linejoin="round" style="filter:drop-shadow(0 0 5px ${c}66)"/>`;
+    /* 末端点 */
+    const last = s[s.length-1];
+    paths += `<circle cx="${xs(s.length-1).toFixed(1)}" cy="${ys(last.hi).toFixed(1)}"
+      r="3.4" fill="${c}" style="filter:drop-shadow(0 0 6px ${c})"/>`;
+    legend += `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:14px">
+      <i style="width:9px;height:2.5px;border-radius:2px;background:${c};display:inline-block"></i>
+      <span style="color:var(--txt-2)">${l.asset}</span>
+      <b style="color:${c};font-family:var(--f-num)">${last.hi.toFixed(1)}</b></span>`;
+  });
+
+  wrap.innerHTML = `<svg width="100%" height="100%" viewBox="0 0 ${W} ${H}"
+      preserveAspectRatio="none" style="display:block">
+    ${grid}${paths}</svg>`;
+
+  const first = valid[0].series[0];
+  const lastT = valid[0].series[valid[0].series.length-1];
+  $('trend-tag').innerHTML = `${first.ts.slice(5,16)} → ${lastT.ts.slice(5,16)}${legend}`;
+}
+
+/* ===== 方案卡 ===== */
+function drawCards(cards){
+  const box = $('cards');
+  if(!cards.length){
+    box.innerHTML = `<div class="empty">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9h8M8 13h5"/>
+      </svg>
+      <div class="t">暂无方案卡</div><div class="s">在管理台发起会诊后生成</div></div>`;
+    $('cards-tag').textContent = '0';
+    return;
+  }
+  box.innerHTML = cards.map(c=>{
+    const v = (c.verdict||'').toUpperCase();
+    const cls = v==='ACT_NOW' ? 'act' : 'mon';
+    const chip = v==='ACT_NOW' ? 'chip act' : 'chip mon';
+    const st = c.status==='CONFIRMED'
+      ? '<span class="chip ok">已确认</span>'
+      : '<span class="chip mon">待确认</span>';
+    return `<div class="card ${cls}">
+      <div class="top">
+        <span class="id">${c.card_id}</span>
+        <span class="${chip}">${v||'-'}</span>
+        <span class="as">${c.asset_id}</span>
+      </div>
+      <div class="cc">${(c.conclusion||'').slice(0,60)}</div>
+      <div style="margin-top:6px;display:flex;gap:6px;align-items:center">
+        ${st}<span style="font-size:10.5px;color:var(--txt-3)">风险 ${c.risk_level||'-'}</span>
+      </div>
+    </div>`;
+  }).join('');
+  $('cards-tag').textContent = `${cards.length} 张`;
+}
+
+/* ===== 事件流 ===== */
+function drawFeed(items){
+  const box = $('feed');
+  if(!items.length){
+    box.innerHTML = `<div class="empty">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+        <circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/>
+      </svg><div class="t">暂无事件</div></div>`;
+    return;
+  }
+  box.innerHTML = items.map(e=>`
+    <div class="ev">
+      <span class="t">${e.t}</span>
+      <span class="dot" style="background:${e.c};box-shadow:0 0 7px ${e.c}"></span>
+      <span class="x">${e.m}</span>
+    </div>`).join('');
+}
+
+/* ===== 告警 ticker ===== */
+function drawTicker(assets){
+  const hot = assets.filter(a=>a.level==='red'||a.level==='orange').slice(0,12);
+  const list = hot.length ? hot : assets.slice(0,8);
+  const one = list.map(a=>`<span class="tk-item">
+      <b>${a.asset_id}</b>
+      <em>${a.name||''}</em>
+      ${a.hi!=null?`HI ${Number(a.hi).toFixed(1)}`:'无健康度'}
+      ${a.level?`· ${LV[a.level]||a.level}`:''}
+      ${a.criticality?`· ${a.criticality} 类`:''}
+    </span>`).join('');
+  $('ticker').innerHTML = one + one;   /* 双份实现无缝滚动 */
+}
+
+/* ===== 主流程 ===== */
+async function load(){
+  /* 1. 设备 */
+  const hot = await mcp('list_hot_assets', {limit: 300});
+  const assets = (hot && hot.assets) || [];
+  const counts = {red:0, orange:0, yellow:0, green:0};
+  assets.forEach(a=>{ if(a.level && counts[a.level]!==undefined) counts[a.level]++; });
+  drawRing(counts, assets.length);
+  drawMatrix(assets);
+  drawTicker(assets);
+
+  /* 2. 关键度分布 */
+  const crit = await fetchAsset('/api/v1/assets/stats/criticality');
+  let dist = [];
+  if(crit && crit.distribution) dist = crit.distribution;
+  else{
+    const m = {};
+    assets.forEach(a=>{ const k=a.criticality||'?'; m[k]=(m[k]||0)+1; });
+    dist = Object.keys(m).sort().map(k=>({criticality:k, n:m[k]}));
+  }
+  drawBars(dist);
+
+  /* 3. 方案卡 */
+  const cards = await api('/v1/cards?limit=8');
+  const cl = (cards && cards.cards) || [];
+  drawCards(cl);
+
+  /* 4. 统计 */
+  $('s-red').textContent = counts.red;
+  $('s-orange').textContent = counts.orange;
+  $('s-pending').textContent = cl.filter(c=>c.status!=='CONFIRMED').length;
+  $('s-done').textContent = cl.filter(c=>c.status==='CONFIRMED').length;
+
+  /* 5. 事件 */
+  const ev = await api('/events/stats');
+  $('transport').textContent = '事件总线 ' + ((ev && ev.transport) || '—');
+  const feed = [];
+  const now = new Date();
+  const fmt = m => { const d=new Date(now-m*60000); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
+  if(ev && ev.emitted) feed.push({t:fmt(0), c:'var(--cyan)', m:`事件总线已投递 ${ev.emitted} 条，失败 ${ev.failures||0}`});
+  if(counts.red) feed.push({t:fmt(1), c:'var(--red)', m:`${counts.red} 台设备进入红色区间，需立即处置`});
+  if(counts.orange) feed.push({t:fmt(3), c:'var(--orange)', m:`${counts.orange} 台设备橙色，建议排入计划检修`});
+  cl.slice(0,3).forEach((c,i)=>feed.push({
+    t:fmt(5+i*3), c:'var(--violet)',
+    m:`方案卡 ${c.card_id} 已生成（${c.asset_id} · ${c.verdict}）`
+  }));
+  if(!feed.length) feed.push({t:fmt(0), c:'var(--green)', m:'系统运行正常，无待处理告警'});
+  drawFeed(feed);
+
+  /* 6. 趋势：取前 3 台有健康度的设备做对比 */
+  const cands = assets.filter(a=>a.hi!=null).slice(0, 3);
+  const pool = cands.length ? cands : assets.slice(0, 1);
+  const lines = [];
+  for(const c of pool){
+    const tr = await api(`/v1/assets/${c.asset_id}/trend?days=7`);
+    if(tr && tr.series && tr.series.length){
+      lines.push({asset: c.asset_id, series: tr.series});
+    }
+  }
+  if(lines.length){
+    drawTrend(lines);
+    $('trend-empty')?.remove();
+  }
+}
+
+/* 视口变化重绘趋势 */
+let rz;
+window.addEventListener('resize', ()=>{
+  clearTimeout(rz);
+  rz = setTimeout(async ()=>{
+    const cands = (await mcp('list_hot_assets',{limit:300}))?.assets?.filter(a=>a.hi!=null).slice(0,3) || [];
+    const lines = [];
+    for(const c of cands){
+      const tr = await api(`/v1/assets/${c.asset_id}/trend?days=7`);
+      if(tr && tr.series && tr.series.length) lines.push({asset:c.asset_id, series:tr.series});
+    }
+    if(lines.length) drawTrend(lines);
+  }, 400);
+});
+
+load();
+setInterval(load, 60000);   /* 每分钟刷新 */
+</script>
+</body>
+</html>
