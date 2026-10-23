@@ -23,7 +23,7 @@ import msgspec
 from litestar import Litestar, Request, get, post
 from litestar.response import Response
 from litestar.exceptions import HTTPException
-from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN, HTTP_409_CONFLICT, HTTP_422_UNPROCESSABLE_ENTITY
+from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND, HTTP_409_CONFLICT, HTTP_422_UNPROCESSABLE_ENTITY
 
 from . import decision, domain, events, integration, repository
 from .cache import MultiLevelCache, build_l2
@@ -311,6 +311,95 @@ async def list_cards(request: Request, limit: int = 50) -> dict[str, Any]:
     return {"tenant_id": tenant, "count": len(rows), "cards": rows}
 
 
+@post("/v1/alerts/sync", status_code=200)
+async def sync_alerts_endpoint(request: Request) -> dict[str, Any]:
+    """从当前健康状态生成告警（幂等）。FR-01 / UC-01-2。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    threshold = float(payload.get("threshold_hi", 70))
+    limit = int(payload.get("limit", 200))
+    res = await asyncio.to_thread(repository.sync_alerts, tenant, threshold, limit)
+    return {"tenant_id": tenant, "threshold_hi": threshold, **res}
+
+
+@get("/v1/alerts")
+async def list_alerts_endpoint(request: Request, status: str = "", level: str = "",
+                               limit: int = 100) -> dict[str, Any]:
+    """告警列表，超时优先。FR-01 / UC-01-1。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    rows = await asyncio.to_thread(repository.list_alerts, tenant, status, level, limit)
+    return {"tenant_id": tenant, "count": len(rows), "alerts": rows}
+
+
+@post("/v1/alerts/{alert_id:str}/ack", status_code=200)
+async def ack_alert_endpoint(request: Request, alert_id: str) -> dict[str, Any]:
+    """处置告警：ack / escalate / close。FR-01 / UC-01-3、UC-01-4。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    action = str(payload.get("action", "ack"))
+    by = str(payload.get("by") or "unknown")
+    comment = str(payload.get("comment") or "")
+    try:
+        return await asyncio.to_thread(repository.ack_alert, tenant, alert_id, action, by, comment)
+    except ValueError as exc:
+        msg = str(exc)
+        code = HTTP_404_NOT_FOUND if "not found" in msg else HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=code, detail=msg) from exc
+
+
+@get("/v1/diagnoses")
+async def list_diagnoses_endpoint(request: Request, asset_id: str = "",
+                                  limit: int = 50) -> dict[str, Any]:
+    """诊断历史。FR-03 / UC-03-1、UC-03-2。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    rows = await asyncio.to_thread(repository.list_diagnoses, tenant, asset_id, limit)
+    return {"tenant_id": tenant, "count": len(rows), "items": rows}
+
+
+@get("/v1/stats/cost")
+async def cost_stats_endpoint(request: Request, limit: int = 10) -> dict[str, Any]:
+    """成本效益聚合。FR-04 / UC-04-1~4。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    data = await asyncio.to_thread(repository.cost_stats, tenant, limit)
+    return {"tenant_id": tenant, **data}
+
+
+@get("/v1/org/tree")
+async def org_tree_endpoint(request: Request) -> dict[str, Any]:
+    """组织树 + 节点健康汇总。FR-05 / UC-05-1~3。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    nodes = await asyncio.to_thread(repository.org_tree, tenant)
+    return {"tenant_id": tenant, "count": len(nodes), "nodes": nodes}
+
+
+@get("/v1/stats/system")
+async def system_stats_endpoint(request: Request) -> dict[str, Any]:
+    """系统运维总览。FR-06 / UC-06-1~5。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    tables = await asyncio.to_thread(repository.system_stats, tenant)
+    return {"tenant_id": tenant, **tables}
+
+
 @post("/mcp", status_code=200)
 async def mcp_endpoint(request: Request) -> dict[str, Any]:
     payload: dict[str, Any] = await request.json()
@@ -449,7 +538,10 @@ async def _on_startup() -> None:
     events.init(os.getenv("PDM_REDIS_URL"))
 
 app = Litestar(
-    route_handlers=[healthz, version, cache_stats, events_stats, integration_stats, asset_trend, warmup_endpoint, diagnose_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard, screen_page, console_page],
+    route_handlers=[healthz, version, cache_stats, events_stats, integration_stats, asset_trend, warmup_endpoint, diagnose_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard, screen_page, console_page,
+                   sync_alerts_endpoint, list_alerts_endpoint, ack_alert_endpoint,
+                   list_diagnoses_endpoint, cost_stats_endpoint, org_tree_endpoint,
+                   system_stats_endpoint],
     on_startup=[_on_startup],
     debug=os.getenv("PDM_ENV", "prod") != "prod",
 )

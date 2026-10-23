@@ -413,6 +413,162 @@ def test_console(pw) -> None:
     browser.close()
 
 
+
+# ---------------------------------------------------------------------------
+# E. 功能扩展（FR-01 ~ FR-06）：页面 + API
+# ---------------------------------------------------------------------------
+def test_extended(pw) -> None:
+    print("\n===== E1. 告警中心 =====", flush=True)
+    browser = pw.chromium.launch(executable_path=CHROME, headless=True,
+                                 args=["--no-sandbox", "--disable-dev-shm-usage"])
+    page = browser.new_page(viewport={"width": 1600, "height": 1000})
+    bad: list[str] = []
+    js: list[str] = []
+    page.on("response", lambda r: bad.append(f"{r.status} {r.url}") if r.status >= 400 else None)
+    page.on("pageerror", lambda e: js.append(str(e)[:110]))
+
+    def goto(slug, wait=2800):
+        page.goto(f"{BASE}/console#/{slug}", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(wait)
+
+    goto("alerts")
+    kpis = page.locator("#alert-kpis .kpi").count()
+    rows = page.locator("#alert-rows tr").count()
+    check("E1.1 告警 KPI 渲染", kpis == 5, f"{kpis} 个")
+    check("E1.2 告警列表有数据", rows >= 1, f"{rows} 行")
+    has_sla = page.evaluate(
+        "() => [...document.querySelectorAll('#alert-rows tr')].some(t=>/剩余|超时|—/.test(t.innerText))")
+    check("E1.3 SLA 列有值", has_sla)
+    # 筛选：只看红色
+    page.click("#seg-alevel button[data-l='red']")
+    page.wait_for_timeout(900)
+    red_rows = page.locator("#alert-rows tr").count()
+    check("E1.4 按等级筛选生效", red_rows >= 0 and red_rows <= rows, f"红 {red_rows} / 全部 {rows}")
+    page.click("#seg-alevel button[data-l='']")
+    page.wait_for_timeout(700)
+
+    # 同步幂等（API 层）
+    print("\n===== E2. 新增 API =====", flush=True)
+    c = httpx.Client(base_url=API, timeout=40,
+                     headers={"X-Tenant-Id": "site-a", "Host": INGRESS_HOST},
+                     limits=httpx.Limits(max_keepalive_connections=0))
+
+    r1 = c.post("/v1/alerts/sync", json={"threshold_hi": 70})
+    r2 = c.post("/v1/alerts/sync", json={"threshold_hi": 70})
+    check("E2.1 告警同步首次", r1.status_code == 200 and "created" in r1.json(),
+          json.dumps(r1.json(), ensure_ascii=False)[:80])
+    check("E2.2 告警同步幂等", r2.json().get("created") == 0,
+          f"第二次 created={r2.json().get('created')}")
+
+    r = c.get("/v1/alerts?limit=5")
+    d = r.json()
+    check("E2.3 告警列表接口", r.status_code == 200 and d.get("count", 0) >= 0,
+          f"count={d.get('count')}")
+    first = (d.get("alerts") or [{}])[0]
+    check("E2.4 告警含 SLA 字段", "sla_remaining_hours" in first,
+          f"{first.get('sla_remaining_hours')}h overdue={first.get('overdue')}")
+
+    r = c.get("/v1/diagnoses?limit=3")
+    check("E2.5 诊断历史接口", r.status_code == 200 and r.json().get("count", 0) >= 1,
+          f"count={r.json().get('count')}")
+    r = c.get("/v1/diagnoses?asset_id=FAN&limit=3")
+    check("E2.6 诊断按位号前缀搜索", r.status_code == 200,
+          f"count={r.json().get('count')}")
+
+    r = c.get("/v1/stats/cost")
+    d = r.json()
+    tot = d.get("total") or {}
+    bd = d.get("breakdown") or {}
+    ssum = sum(bd.values())
+    check("E2.7 成本接口", r.status_code == 200 and tot.get("total_cost") is not None,
+          f"net={tot.get('net_benefit')} roi={tot.get('roi_pct')}%")
+    check("E2.8 成本口径一致（构成和=总成本）",
+          abs(ssum - (tot.get("total_cost") or 0)) < 1,
+          f"{round(ssum,2)} vs {tot.get('total_cost')}")
+    check("E2.9 净收益=避免损失-总成本",
+          abs((tot.get("avoided_loss", 0) - tot.get("total_cost", 0))
+              - tot.get("net_benefit", 0)) < 1,
+          f"{tot.get('net_benefit')}")
+
+    r = c.get("/v1/org/tree")
+    d = r.json()
+    nodes = d.get("nodes") or []
+    check("E2.10 组织树接口", r.status_code == 200 and len(nodes) >= 1, f"{len(nodes)} 节点")
+    check("E2.11 组织树含层级与汇总", all(
+        "depth" in n and "asset_count" in n and "levels" in n for n in nodes[:5]),
+        "字段齐全")
+
+    r = c.get("/v1/stats/system")
+    d = r.json()
+    tabs = d.get("tables") or []
+    check("E2.12 系统统计接口", r.status_code == 200 and len(tabs) >= 8, f"{len(tabs)} 张表")
+    check("E2.13 大表用估算标记", any(t.get("exact") is False for t in tabs),
+          "有 exact=false 的表")
+
+    # 告警处置状态流转
+    if first.get("alert_id") and first.get("status") != "CLOSED":
+        aid = first["alert_id"]
+        ra = c.post(f"/v1/alerts/{aid}/ack",
+                    json={"action": "ack", "by": "e2e", "comment": "自动化确认"})
+        check("E2.14 告警确认流转", ra.status_code == 200 and ra.json().get("status") == "ACKED",
+              str(ra.json())[:70])
+        rb = c.post(f"/v1/alerts/{aid}/ack",
+                    json={"action": "escalate", "by": "e2e"})
+        check("E2.15 告警升级流转", rb.json().get("status") == "ESCALATED",
+              str(rb.json())[:70])
+    rc = c.post("/v1/alerts/ALT-NOT-EXIST/ack", json={"action": "ack", "by": "e2e"})
+    check("E2.16 不存在告警返回 404", rc.status_code == 404, f"HTTP {rc.status_code}")
+    c.close()
+
+    print("\n===== E3. 设备 360 / 诊断历史 / 成本 / 组织 / 运维 页面 =====", flush=True)
+    goto("asset/FAN-00004", 3600)
+    title = page.locator("#a360-title").inner_text()
+    kv_items = page.locator("#a360-kv > div > div").count()
+    mps = page.locator("#a360-mps tr").count()
+    check("E3.1 设备 360 标题", "FAN-00004" in title, title)
+    check("E3.2 设备 360 基础信息", kv_items >= 8, f"{kv_items} 项")
+    check("E3.3 设备 360 测点清单", mps >= 1, f"{mps} 行")
+    check("E3.4 设备 360 趋势或空态",
+          page.locator("#a360-trend svg").count() >= 1
+          or page.locator("#a360-trend .empty").count() >= 1)
+
+    goto("diagnoses")
+    drows = page.locator("#diag-rows tr").count()
+    check("E3.5 诊断历史列表", drows >= 10, f"{drows} 行")
+    page.fill("#dq", "FAN-00004")
+    page.wait_for_timeout(1400)
+    frows = page.locator("#diag-rows tr").count()
+    check("E3.6 诊断历史搜索", 0 < frows <= drows, f"过滤后 {frows} 行")
+
+    goto("cost")
+    ck = page.locator("#cost-kpis .kpi").count()
+    donut = page.locator("#cost-donut svg circle").count()
+    top = page.locator("#cost-top > div").count()
+    opts = page.locator("#cost-options tr").count()
+    check("E3.7 成本 KPI", ck == 4, f"{ck} 个")
+    check("E3.8 成本环形图", donut >= 4, f"{donut} 段")
+    check("E3.9 净收益排行", top >= 1, f"{top} 条")
+    check("E3.10 方案对比表", opts >= 1, f"{opts} 行")
+
+    goto("org")
+    orows = page.locator("#org-rows tr").count()
+    ok = page.locator("#org-kpis .kpi").count()
+    check("E3.11 组织树渲染", orows >= 5, f"{orows} 节点")
+    check("E3.12 组织 KPI", ok == 5, f"{ok} 个")
+
+    goto("system")
+    stabs = page.locator("#sys-tables div").count()
+    sk = page.locator("#sys-kpis .kpi").count()
+    check("E3.13 系统表规模", stabs >= 24, f"{stabs} 个节点（12 表×2）")
+    check("E3.14 系统 KPI", sk == 4, f"{sk} 个")
+
+    real_bad = [b for b in bad if "favicon" not in b.lower()]
+    check("E3.15 新页面无资源失败", not real_bad, "; ".join(real_bad[:2])[:110])
+    check("E3.16 新页面无 JS 异常", not js, "; ".join(js[:2])[:110])
+    shot(page, "E3_extended")
+    browser.close()
+
+
 def main() -> None:
     t0 = time.time()
     print(f"谛听 PdM 全端全链路功能测试 · {datetime.now():%Y-%m-%d %H:%M:%S}", flush=True)
@@ -421,6 +577,7 @@ def main() -> None:
         test_dashboard(pw)
         test_screen(pw)
         test_console(pw)
+        test_extended(pw)
     test_api()
     test_java()
 

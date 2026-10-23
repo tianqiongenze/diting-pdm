@@ -59,6 +59,10 @@ a{color:inherit;text-decoration:none}
 .nav .sp{flex:1}
 .nav svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.7;
          stroke-linecap:round;stroke-linejoin:round}
+.ngroup{display:flex;flex-direction:column;gap:4px}
+.nsep{width:22px;height:1px;background:rgba(255,255,255,.1);margin:5px 0}
+.nav a .dot{position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;
+            background:#F43F5E;box-shadow:0 0 6px #F43F5E}
 
 /* ===== 主体 ===== */
 .main{margin-left:var(--nav-w);min-height:100vh;display:flex;flex-direction:column}
@@ -300,18 +304,45 @@ tbody tr:last-child td{border-bottom:0}
 
 <nav class="nav">
   <div class="brand">谛</div>
-  <a href="#/dashboard" data-tip="运营看板" data-v="dashboard">
-    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
-  </a>
-  <a href="#/assets" data-tip="设备台账" data-v="assets">
-    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h7"/></svg>
-  </a>
-  <a href="#/cards" data-tip="工单看板" data-v="cards">
-    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="16" rx="1.5"/><rect x="10.5" y="4" width="6" height="11" rx="1.5"/><rect x="18" y="4" width="3" height="16" rx="1.5"/></svg>
-  </a>
-  <a href="#/diagnose" data-tip="诊断工作台" data-v="diagnose">
-    <svg viewBox="0 0 24 24"><path d="M3 12h4l2-5 3 10 2.5-6 1.5 3h5"/></svg>
-  </a>
+  <div class="ngroup">
+    <a href="#/dashboard" data-tip="运营看板" data-v="dashboard">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+    </a>
+    <a href="#/alerts" data-tip="告警中心" data-v="alerts">
+      <svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6v4l-2 3h16l-2-3V9a6 6 0 0 0-6-6z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>
+      <i class="dot" id="nav-alert-dot" hidden></i>
+    </a>
+  </div>
+  <div class="nsep"></div>
+  <div class="ngroup">
+    <a href="#/assets" data-tip="设备台账" data-v="assets">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h7"/></svg>
+    </a>
+    <a href="#/org" data-tip="组织产线" data-v="org">
+      <svg viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="5" rx="1"/><rect x="2.5" y="16.5" width="6" height="5" rx="1"/><rect x="15.5" y="16.5" width="6" height="5" rx="1"/><path d="M12 7.5v4M5.5 16.5v-5h13v5"/></svg>
+    </a>
+  </div>
+  <div class="nsep"></div>
+  <div class="ngroup">
+    <a href="#/diagnose" data-tip="诊断工作台" data-v="diagnose">
+      <svg viewBox="0 0 24 24"><path d="M3 12h4l2-5 3 10 2.5-6 1.5 3h5"/></svg>
+    </a>
+    <a href="#/diagnoses" data-tip="诊断历史" data-v="diagnoses">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+    </a>
+    <a href="#/cost" data-tip="成本效益" data-v="cost">
+      <svg viewBox="0 0 24 24"><path d="M4 19V9M9.5 19V5M15 19v-7M20.5 19v-4"/></svg>
+    </a>
+  </div>
+  <div class="nsep"></div>
+  <div class="ngroup">
+    <a href="#/cards" data-tip="工单看板" data-v="cards">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="16" rx="1.5"/><rect x="10.5" y="4" width="6" height="11" rx="1.5"/><rect x="18" y="4" width="3" height="16" rx="1.5"/></svg>
+    </a>
+    <a href="#/system" data-tip="系统运维" data-v="system">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>
+    </a>
+  </div>
   <div class="sp"></div>
   <a href="screen" target="_blank" data-tip="大屏驾驶舱">
     <svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="12.5" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></svg>
@@ -481,8 +512,167 @@ tbody tr:last-child td{border-bottom:0}
       </div>
     </div>
   </section>
-</div>
 
+
+  <!-- ===== 告警中心 ===== -->
+  <section class="view" id="v-alerts">
+    <div class="kpis" id="alert-kpis"></div>
+    <div class="card grow">
+      <div class="filters">
+        <div class="seg" id="seg-astatus">
+          <button class="on" data-s="">全部</button>
+          <button data-s="OPEN">待处置</button>
+          <button data-s="ACKED">已确认</button>
+          <button data-s="ESCALATED">已升级</button>
+          <button data-s="CLOSED">已关闭</button>
+        </div>
+        <div class="seg" id="seg-alevel">
+          <button class="on" data-l="">全部等级</button>
+          <button data-l="red">红</button>
+          <button data-l="orange">橙</button>
+        </div>
+        <button class="btn sm" id="btn-sync-alerts">同步告警</button>
+        <span class="count" id="alert-count">—</span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>等级</th><th>告警</th><th>设备</th><th>规则</th>
+            <th>SLA</th><th>状态</th><th>负责人</th><th style="text-align:right">操作</th>
+          </tr></thead>
+          <tbody id="alert-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 设备 360 ===== -->
+  <section class="view" id="v-asset360">
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-h">
+        <h2 id="a360-title">设备详情</h2>
+        <span class="sub" id="a360-sub">—</span>
+        <div class="right">
+          <button class="btn sm" id="a360-back">← 返回台账</button>
+          <button class="btn sm pri" id="a360-diag">诊断</button>
+        </div>
+      </div>
+      <div class="card-b" id="a360-kv"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-h"><h2>健康趋势</h2><span class="sub" id="a360-trend-sub">—</span></div>
+        <div class="card-b"><div class="chart-box" id="a360-trend" style="height:220px"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-h"><h2>测点清单</h2><span class="sub" id="a360-mp-sub">—</span></div>
+        <div class="card-b" style="max-height:260px;overflow:auto">
+          <table style="font-size:12.5px">
+            <thead><tr><th>测点</th><th>量</th><th>方向</th><th>采样率</th></tr></thead>
+            <tbody id="a360-mps"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+      <div class="card">
+        <div class="card-h"><h2>历史诊断</h2><span class="sub" id="a360-diag-sub">—</span></div>
+        <div class="card-b" id="a360-diags" style="max-height:280px;overflow:auto"></div>
+      </div>
+      <div class="card">
+        <div class="card-h"><h2>关联工单</h2><span class="sub" id="a360-card-sub">—</span></div>
+        <div class="card-b" id="a360-cards" style="max-height:280px;overflow:auto"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 诊断历史 ===== -->
+  <section class="view" id="v-diagnoses">
+    <div class="card grow">
+      <div class="filters">
+        <input type="search" id="dq" placeholder="按设备位号搜索，如 FAN-00004">
+        <div class="seg" id="seg-dlimit">
+          <button class="on" data-n="50">最近 50</button>
+          <button data-n="100">最近 100</button>
+          <button data-n="200">最近 200</button>
+        </div>
+        <span class="count" id="diag-count">—</span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>时间</th><th>设备</th><th>HI</th><th>等级</th>
+            <th>主因</th><th>模型</th><th>模式</th><th style="text-align:right">操作</th>
+          </tr></thead>
+          <tbody id="diag-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 成本效益 ===== -->
+  <section class="view" id="v-cost">
+    <div class="kpis" id="cost-kpis"></div>
+    <div style="display:grid;grid-template-columns:1fr 1.2fr;gap:16px;margin-bottom:16px">
+      <div class="card">
+        <div class="card-h"><h2>成本构成</h2><span class="sub">停机 / 人工 / 备件</span></div>
+        <div class="card-b"><div class="chart-box" id="cost-donut" style="height:230px"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-h"><h2>设备净收益 Top</h2><span class="sub" id="cost-top-sub">—</span></div>
+        <div class="card-b" id="cost-top"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h"><h2>方案对比</h2><span class="sub">按总成本排序</span></div>
+      <div class="tbl-wrap" style="max-height:320px">
+        <table>
+          <thead><tr><th>方案</th><th>出现次数</th><th>总成本</th><th>停机时长合计</th><th>平均单次成本</th></tr></thead>
+          <tbody id="cost-options"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 组织产线 ===== -->
+  <section class="view" id="v-org">
+    <div class="kpis" id="org-kpis"></div>
+    <div class="card grow">
+      <div class="card-h"><h2>组织与产线</h2><span class="sub" id="org-sub">—</span></div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th style="min-width:240px">节点</th><th>类型</th><th>设备数</th>
+            <th>红</th><th>橙</th><th>黄</th><th>绿</th><th>未评估</th><th style="text-align:right">操作</th>
+          </tr></thead>
+          <tbody id="org-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 系统运维 ===== -->
+  <section class="view" id="v-system">
+    <div class="kpis" id="sys-kpis"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-h"><h2>核心表规模</h2><span class="sub">行数</span></div>
+        <div class="card-b" id="sys-tables" style="max-height:420px;overflow:auto"></div>
+      </div>
+      <div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-h"><h2>服务与事件</h2></div>
+          <div class="card-b" id="sys-service"></div>
+        </div>
+        <div class="card">
+          <div class="card-h"><h2>集成与缓存</h2></div>
+          <div class="card-b" id="sys-integration"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
 <div class="drawer-mask" id="mask"></div>
 <div class="drawer" id="drawer">
   <div class="drawer-h">
@@ -549,26 +739,51 @@ const S = {assets: [], cards: [], trend: null};
 /* ===== 路由 ===== */
 const VIEWS = {
   dashboard: {title:'运营看板', crumb:'设备健康总览', fn: renderDashboard},
+  alerts:    {title:'告警中心', crumb:'分级告警与处置', fn: renderAlerts},
   assets:    {title:'设备台账', crumb:'全部在监设备', fn: renderAssets},
-  cards:     {title:'工单看板', crumb:'方案卡闭环',   fn: renderCards},
+  asset:     {title:'设备详情', crumb:'360 视图',     fn: renderAsset360},
+  org:       {title:'组织产线', crumb:'车间/产线/工位', fn: renderOrg},
   diagnose:  {title:'诊断工作台', crumb:'单设备诊断', fn: renderDiagnose},
+  diagnoses: {title:'诊断历史', crumb:'历史记录检索', fn: renderDiagnoses},
+  cost:      {title:'成本效益', crumb:'投入产出分析', fn: renderCost},
+  cards:     {title:'工单看板', crumb:'方案卡闭环',   fn: renderCards},
+  system:    {title:'系统运维', crumb:'服务与数据状态', fn: renderSystem},
 };
 function route(){
-  const v = (location.hash.replace('#/','') || 'dashboard').split('?')[0];
+  const raw = (location.hash.replace('#/','') || 'dashboard').split('?')[0];
+  const v = raw.split('/')[0];
+  const arg = raw.split('/')[1] || '';
   const cfg = VIEWS[v] || VIEWS.dashboard;
   document.querySelectorAll('.view').forEach(e=>e.classList.remove('on'));
-  $('v-' + (VIEWS[v] ? v : 'dashboard')).classList.add('on');
+  const viewId = v === 'asset' ? 'v-asset360' : ('v-' + (VIEWS[v] ? v : 'dashboard'));
+  $(viewId).classList.add('on');
   document.querySelectorAll('.nav a[data-v]').forEach(a=>a.classList.toggle('on', a.dataset.v === v));
   $('page-title').textContent = cfg.title;
   $('crumb').textContent = cfg.crumb;
   document.title = `谛听 PdM · ${cfg.title}`;
-  cfg.fn && cfg.fn();
+  // 视图渲染失败不能静默：async 函数的 rejection 不会触发 pageerror，
+  // 会把整块内容留白，必须显式捕获并输出到控制台与页面
+  if(cfg.fn){
+    Promise.resolve(cfg.fn(arg)).catch(err=>{
+      console.error('[view:' + v + ']', err);
+      const host = document.querySelector('.view.on');
+      if(host){
+        host.innerHTML = `<div class="card"><div class="card-b">
+          <div class="empty">
+            <svg width="44" height="44" viewBox="0 0 24 24" stroke="currentColor" fill="none"
+              stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+            <div class="t">页面渲染失败</div>
+            <div class="s">${String(err && err.message || err).slice(0,160)}</div>
+          </div></div></div>`;
+      }
+    });
+  }
 }
 window.addEventListener('hashchange', route);
 
 /* ===== 加载数据 ===== */
 async function loadAll(){
-  const hot = await mcp('list_hot_assets', {limit: 300});
+  const hot = await mcp('list_hot_assets', {limit: 200});
   S.assets = (hot && hot.assets) || [];
   const c = await api('/v1/cards?limit=50');
   S.cards = (c && c.cards) || [];
@@ -576,6 +791,10 @@ async function loadAll(){
 
 /* ===== 视图 1：运营看板 ===== */
 async function renderDashboard(){
+  if(!sharedReady && !S.assets.length){
+    $('kpis').innerHTML = '<div class="kpi"><div class="l">加载中</div>' +
+      '<div class="v" style="font-size:18px">…</div><div class="d">正在拉取设备快照</div></div>';
+  }
   const counts = {red:0, orange:0, yellow:0, green:0, none:0};
   S.assets.forEach(a=>{
     if(a.level && counts[a.level]!==undefined) counts[a.level]++;
@@ -746,6 +965,12 @@ function drawArea(box, series){
 /* ===== 视图 2：设备台账 ===== */
 let aq = '', ac = '', al = '';
 async function renderAssets(){
+  if(!sharedReady && !S.assets.length){
+    $('asset-rows').innerHTML = `<tr><td colspan="8"><div class="empty">
+      <div class="t">正在加载设备快照…</div><div class="s">首次加载约需数秒</div></div></td></tr>`;
+    $('asset-count').textContent = '加载中';
+    return;
+  }
   const list = S.assets.filter(a=>{
     if(aq && !(`${a.asset_id} ${a.name||''}`.toLowerCase().includes(aq.toLowerCase()))) return false;
     if(ac && a.criticality !== ac) return false;
@@ -1034,7 +1259,33 @@ document.addEventListener('click', async e=>{
     return;
   }
   if(t.dataset.asset && !t.dataset.diag){
-    openDrawer(t.dataset.asset);
+    location.hash = '#/asset/' + t.dataset.asset;
+    return;
+  }
+  if(t.dataset.asset360){
+    location.hash = '#/asset/' + t.dataset.asset360;
+    return;
+  }
+  if(t.dataset.orgfilter){
+    aq = ''; ac = ''; al = '';
+    document.querySelectorAll('#seg-crit button, #seg-lv button').forEach(b=>b.classList.remove('on'));
+    document.querySelector('#seg-crit button').classList.add('on');
+    document.querySelector('#seg-lv button').classList.add('on');
+    $('q').value = '';
+    location.hash = '#/assets';
+    toast('已切换到设备台账，可用搜索定位 ' + t.dataset.orgfilter);
+    return;
+  }
+  if(t.dataset.ack || t.dataset.esc){
+    const id = t.dataset.ack || t.dataset.esc;
+    const action = t.dataset.ack ? 'ack' : 'escalate';
+    t.disabled = true; t.textContent = '提交中…';
+    const r = await api(`/v1/alerts/${encodeURIComponent(id)}/ack`,
+      {method:'POST', body:JSON.stringify({action, by:'console',
+        comment: action==='ack' ? '看板确认' : '看板升级'})});
+    if(r && r.status){ toast(`告警 ${id} → ${r.status}`); }
+    else{ toast('操作失败：' + (r?.detail || '未知错误')); }
+    await renderAlerts();
     return;
   }
   if(t.dataset.card){
@@ -1063,6 +1314,41 @@ $('btn-consult').onclick = async ()=>{
     toast(`已生成方案卡 ${r.card.card_id}${r.card.deduplicated?'（复用同设备卡片）':''}`);
     await loadAll(); route();
   }else{ toast('会诊失败：' + (r?.detail || '未知错误')); }
+};
+$('seg-astatus').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  [...$('seg-astatus').children].forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); AS.status = b.dataset.s; renderAlerts();
+});
+$('seg-alevel').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  [...$('seg-alevel').children].forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); AS.level = b.dataset.l; renderAlerts();
+});
+$('btn-sync-alerts').onclick = async ()=>{
+  const btn = $('btn-sync-alerts');
+  btn.disabled = true; btn.textContent = '同步中…';
+  const r = await api('/v1/alerts/sync', {method:'POST',
+    body:JSON.stringify({tenant_id:TENANT, threshold_hi:70})});
+  btn.disabled = false; btn.textContent = '同步告警';
+  if(r && r.created != null){
+    toast(`同步完成：新建 ${r.created} 条，跳过 ${r.skipped} 条（已存在）`);
+    await renderAlerts();
+  }else{ toast('同步失败：' + (r?.detail || '未知错误')); }
+};
+$('seg-dlimit').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  [...$('seg-dlimit').children].forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); DS.limit = Number(b.dataset.n); renderDiagnoses();
+});
+$('dq').addEventListener('input', e=>{
+  clearTimeout(window.__dqT);
+  window.__dqT = setTimeout(()=>{ DS.q = e.target.value.trim(); renderDiagnoses(); }, 320);
+});
+$('a360-back').onclick = ()=> location.hash = '#/assets';
+$('a360-diag').onclick = ()=>{
+  const id = ($('a360-title').textContent||'').split(' ')[0];
+  if(id){ location.hash = '#/diagnose'; $('d-asset').value = id; setTimeout(runDiagnose, 150); }
 };
 $('btn-refresh').onclick = async ()=>{
   $('btn-refresh').disabled = true;
@@ -1098,10 +1384,432 @@ window.addEventListener('resize', ()=>{
   }, 260);
 });
 
-/* ===== 启动 ===== */
+
+/* =====================================================================
+   新增视图（FR-01 ~ FR-06）
+   ===================================================================== */
+
+/* ---------- 通用小工具 ---------- */
+function money(v){
+  const n = Number(v) || 0;
+  if(Math.abs(n) >= 1e8) return (n/1e8).toFixed(2) + ' 亿';
+  if(Math.abs(n) >= 1e4) return (n/1e4).toFixed(1) + ' 万';
+  return n.toFixed(0);
+}
+function relTime(t){
+  if(!t) return '—';
+  const d = new Date(t);
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if(diff < 60) return '刚刚';
+  if(diff < 3600) return Math.floor(diff/60) + ' 分钟前';
+  if(diff < 86400) return Math.floor(diff/3600) + ' 小时前';
+  return Math.floor(diff/86400) + ' 天前';
+}
+function dtStr(t){
+  if(!t) return '—';
+  const d = new Date(t);
+  const p = n => String(n).padStart(2,'0');
+  return `${d.getMonth()+1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function emptyBox(title, sub, icon){
+  return `<div class="empty">
+    <svg width="42" height="42" viewBox="0 0 24 24" stroke="currentColor" fill="none"
+      stroke-width="1.5" stroke-linecap="round">${icon||'<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>'}</svg>
+    <div class="t">${title}</div><div class="s">${sub||''}</div></div>`;
+}
+
+/* ---------- FR-01 告警中心 ---------- */
+const AS = {status:'', level:'', items:[]};
+
+async function renderAlerts(){
+  const q = new URLSearchParams();
+  if(AS.status) q.set('status', AS.status);
+  if(AS.level) q.set('level', AS.level);
+  q.set('limit', '200');
+  const r = await api('/v1/alerts?' + q.toString());
+  const list = (r && r.alerts) || [];
+  AS.items = list;
+
+  const c = {OPEN:0, ACKED:0, ESCALATED:0, CLOSED:0};
+  list.forEach(x=>{ if(c[x.status]!==undefined) c[x.status]++; });
+  const overdue = list.filter(x=>x.overdue && x.status !== 'CLOSED').length;
+  const red = list.filter(x=>x.level==='red' && x.status !== 'CLOSED').length;
+
+  $('alert-kpis').innerHTML = `
+    <div class="kpi r"><div class="l">红色告警</div><div class="v">${red}</div>
+      <div class="d">需 4 小时内处置</div></div>
+    <div class="kpi y"><div class="l">待处置</div><div class="v">${c.OPEN}</div>
+      <div class="d">尚未认领</div></div>
+    <div class="kpi c"><div class="l">已确认</div><div class="v">${c.ACKED}</div>
+      <div class="d">处理中</div></div>
+    <div class="kpi o"><div class="l">已升级</div><div class="v">${c.ESCALATED}</div>
+      <div class="d">超时或升级处理</div></div>
+    <div class="kpi ${overdue?'r':'g'}"><div class="l">SLA 超时</div><div class="v">${overdue}</div>
+      <div class="d">${overdue?'需立即跟进':'全部在时限内'}</div></div>`;
+
+  $('alert-count').textContent = `${list.length} 条`;
+  const dot = $('nav-alert-dot');
+  if(dot){ dot.hidden = !(c.OPEN + c.ESCALATED); }
+
+  if(!list.length){
+    $('alert-rows').innerHTML = `<tr><td colspan="8">${emptyBox(
+      '暂无告警',
+      '点击右上「同步告警」，从当前健康状态生成待处置告警。',
+      '<path d="M12 3a6 6 0 0 0-6 6v4l-2 3h16l-2-3V9a6 6 0 0 0-6-6z"/><path d="M10 19a2 2 0 0 0 4 0"/>')}</td></tr>`;
+    return;
+  }
+
+  const stMap = {OPEN:'待处置', ACKED:'已确认', ESCALATED:'已升级', CLOSED:'已关闭'};
+  $('alert-rows').innerHTML = list.map(a=>{
+    const sla = a.sla_remaining_hours;
+    const slaTxt = a.status === 'CLOSED' ? '—'
+      : (sla < 0 ? `超时 ${Math.abs(sla).toFixed(1)}h` : `剩余 ${sla.toFixed(1)}h`);
+    const slaColor = a.status === 'CLOSED' ? 'var(--txt-3)'
+      : (sla < 0 ? 'var(--red)' : (sla < 2 ? 'var(--orange)' : 'var(--txt-2)'));
+    const cls = a.status === 'OPEN' ? 'mon' : (a.status === 'ACKED' ? 'crit b'
+      : (a.status === 'ESCALATED' ? 'act' : 'ok'));
+    return `<tr>
+      <td>${lvBadge(a.level)}</td>
+      <td style="max-width:300px">
+        <div style="font-size:12.5px;color:var(--txt)">${a.message||'—'}</div>
+        <div style="font-size:11px;color:var(--txt-3);margin-top:2px">${a.action_hint||''}</div>
+      </td>
+      <td><b class="mono">${a.asset_id}</b></td>
+      <td><span class="mono" style="font-size:11px;color:var(--txt-3)">${a.rule_id}</span></td>
+      <td style="color:${slaColor};font-weight:600;font-size:12px;white-space:nowrap">${slaTxt}</td>
+      <td><span class="badge ${cls}">${stMap[a.status]||a.status}</span></td>
+      <td style="font-size:12px;color:var(--txt-2)">${a.owner_role||'—'}</td>
+      <td style="text-align:right;white-space:nowrap">
+        ${a.status==='CLOSED' ? `<span style="font-size:11.5px;color:var(--txt-3)">${a.ack_by||''}</span>`
+          : `<button class="btn sm" data-ack="${a.alert_id}">确认</button>
+             <button class="btn sm" data-esc="${a.alert_id}">升级</button>`}
+      </td></tr>`;
+  }).join('');
+}
+
+/* ---------- FR-02 设备 360 ---------- */
+async function renderAsset360(assetId){
+  if(!assetId){ location.hash = '#/assets'; return; }
+  const a = S.assets.find(x=>x.asset_id === assetId);
+  $('a360-title').textContent = assetId + (a && a.name ? ' · ' + a.name : '');
+  $('a360-sub').textContent = '加载中…';
+  $('a360-kv').innerHTML = emptyBox('加载中…', '');
+
+  const [detail, trend, diags] = await Promise.all([
+    fetchAsset(`/api/v1/assets/${encodeURIComponent(assetId)}`),
+    api(`/v1/assets/${encodeURIComponent(assetId)}/trend?days=7`),
+    api(`/v1/diagnoses?asset_id=${encodeURIComponent(assetId)}&limit=20`),
+  ]);
+
+  const asset = (detail && detail.asset) || a || {};
+  const mps = (detail && detail.measure_points) || [];
+  const cards = S.cards.filter(c=>c.asset_id === assetId);
+
+  $('a360-sub').textContent = `${asset.category||'—'} · ${asset.criticality||'—'} 类 · 节点 ${asset.node_id||'—'}`;
+  $('a360-kv').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px">
+      <div><div style="font-size:11.5px;color:var(--txt-3)">设备位号</div>
+        <div class="mono" style="font-size:15px;font-weight:600;margin-top:3px">${asset.asset_id||'—'}</div></div>
+      <div><div style="font-size:11.5px;color:var(--txt-3)">名称</div>
+        <div style="font-size:14px;margin-top:3px">${asset.name||'—'}</div></div>
+      <div><div style="font-size:11.5px;color:var(--txt-3)">类别</div>
+        <div style="font-size:14px;margin-top:3px">${asset.category||'—'}</div></div>
+      <div><div style="font-size:11.5px;color:var(--txt-3)">关键度</div>
+        <div style="margin-top:3px"><span class="badge crit ${(asset.criticality||'').toLowerCase()}">${asset.criticality||'—'} 类</span></div></div>
+      <div><div style="font-size:11.5px;color:var(--txt-3)">健康指数</div>
+        <div class="mono" style="font-size:20px;font-weight:700;margin-top:1px;
+          color:${LVC[a?.level]||'var(--txt)'}">${a&&a.hi!=null?Number(a.hi).toFixed(1):'—'}</div></div>
+      <div><div style="font-size:11.5px;color:var(--txt-3)">等级</div>
+        <div style="margin-top:3px">${lvBadge(a?.level)}</div></div>
+      <div><div style="font-size:11.5px;color:var(--txt-3)">振动 RMS</div>
+        <div class="mono" style="font-size:15px;margin-top:3px">${a&&a.rms!=null?Number(a.rms).toFixed(3):'—'}</div></div>
+      <div><div style="font-size:11.5px;color:var(--txt-3)">测点数</div>
+        <div class="mono" style="font-size:15px;margin-top:3px">${detail?.measure_point_count ?? mps.length}</div></div>
+    </div>`;
+
+  /* 趋势 */
+  if(trend && trend.series && trend.series.length){
+    drawArea($('a360-trend'), trend.series);
+    const s = trend.summary || {};
+    $('a360-trend-sub').textContent = `${trend.points} 点 · 均值 ${s.avg_hi} · 最低 ${s.min_hi}`;
+  }else{
+    $('a360-trend').innerHTML = emptyBox('暂无趋势', '该设备尚未产生健康历史。',
+      '<path d="M3 17l5-6 4 4 6-8 3 4"/><path d="M3 21h18"/>');
+    $('a360-trend-sub').textContent = '无数据';
+  }
+
+  /* 测点 */
+  $('a360-mp-sub').textContent = `${mps.length} 个`;
+  $('a360-mps').innerHTML = mps.length ? mps.map(m=>`
+    <tr><td class="mono" style="font-size:11px">${(m.mp_id||'').split('.').slice(-2).join('.')}</td>
+      <td>${m.quantity||'—'}</td><td>${m.direction||'—'}</td>
+      <td class="mono">${m.sample_rate||'—'}</td></tr>`).join('')
+    : `<tr><td colspan="4">${emptyBox('无测点','该设备未配置测点。')}</td></tr>`;
+
+  /* 历史诊断 */
+  const dl = (diags && diags.items) || [];
+  $('a360-diag-sub').textContent = `${dl.length} 条`;
+  $('a360-diags').innerHTML = dl.length ? dl.map(d=>{
+    const main = (d.contributions||[])[0];
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed #EDF1F7;font-size:12.5px">
+      <span class="mono" style="color:var(--txt-3);flex:0 0 78px">${dtStr(d.created_at)}</span>
+      ${lvBadge(d.level)}
+      <span class="mono" style="width:44px;text-align:right">${d.hi!=null?Number(d.hi).toFixed(1):'—'}</span>
+      <span style="color:var(--txt-2);flex:1">${main?main.name:'—'}${main&&main.evidence?' · '+main.evidence:''}</span>
+      <span style="font-size:11px;color:var(--txt-3)">${d.model_version||''}</span>
+    </div>`;
+  }).join('') : emptyBox('暂无诊断记录','该设备尚未被诊断过。');
+
+  /* 关联工单 */
+  $('a360-card-sub').textContent = `${cards.length} 张`;
+  $('a360-cards').innerHTML = cards.length ? cards.map(c=>`
+    <div style="display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px dashed #EDF1F7;font-size:12.5px">
+      <span class="mono" style="color:var(--accent)">${c.card_id}</span>
+      <span class="badge ${c.verdict==='ACT_NOW'?'act':'mon'}">${c.verdict}</span>
+      <span style="color:var(--txt-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.conclusion||''}</span>
+      <span class="badge ${c.status==='CONFIRMED'?'ok':'mon'}">${c.status==='CONFIRMED'?'已闭环':'待确认'}</span>
+    </div>`).join('') : emptyBox('暂无关联工单','该设备尚未生成方案卡。');
+}
+
+/* ---------- FR-03 诊断历史 ---------- */
+const DS = {q:'', limit:50};
+async function renderDiagnoses(){
+  const q = new URLSearchParams();
+  if(DS.q) q.set('asset_id', DS.q);
+  q.set('limit', DS.limit);
+  const r = await api('/v1/diagnoses?' + q.toString());
+  const items = (r && r.items) || [];
+  $('diag-count').textContent = `${items.length} 条`;
+
+  if(!items.length){
+    $('diag-rows').innerHTML = `<tr><td colspan="8">${emptyBox(
+      '没有匹配的诊断记录','试试清空搜索词，或换一个设备位号前缀。',
+      '<circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/>')}</td></tr>`;
+    return;
+  }
+  $('diag-rows').innerHTML = items.map(d=>{
+    const main = (d.contributions||[])[0];
+    const txt = main ? `${main.name}${main.evidence?' · '+main.evidence:''}` : '—';
+    return `<tr>
+      <td class="mono" style="font-size:12px;white-space:nowrap">${dtStr(d.created_at)}</td>
+      <td><b class="mono">${d.asset_id}</b></td>
+      <td class="mono" style="color:${LVC[d.level]||'var(--txt)'};font-weight:600">
+        ${d.hi!=null?Number(d.hi).toFixed(1):'—'}</td>
+      <td>${lvBadge(d.level)}</td>
+      <td style="max-width:340px;font-size:12.5px;color:var(--txt-2)">${txt}</td>
+      <td class="mono" style="font-size:11.5px;color:var(--txt-3)">${d.model_version||'—'}</td>
+      <td>${d.degraded ? '<span class="badge mon">降级</span>' : '<span class="badge ok">正常</span>'}</td>
+      <td style="text-align:right"><button class="btn sm" data-asset360="${d.asset_id}">设备</button></td>
+    </tr>`;
+  }).join('');
+}
+
+/* ---------- 环形图（成本构成） ---------- */
+function drawDonut(box, parts){
+  const W = box.clientWidth || 340, H = box.clientHeight || 230;
+  const cx = W*0.34, cy = H/2, R = Math.min(W*0.28, H*0.38), w = 22;
+  const total = parts.reduce((s,p)=>s+p.value,0) || 1;
+  const C = 2*Math.PI*R;
+  let acc = 0, svg = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#EDF1F7" stroke-width="${w}"/>`;
+  parts.forEach(p=>{
+    if(!p.value) return;
+    const len = (p.value/total)*C;
+    svg += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${p.color}"
+      stroke-width="${w}" stroke-dasharray="${len} ${C-len}" stroke-dashoffset="${-acc}"
+      transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt"/>`;
+    acc += len;
+  });
+  svg += `<text x="${cx}" y="${cy-4}" text-anchor="middle" font-size="20" font-weight="700"
+      fill="#0F172A" font-family="ui-monospace,monospace">${money(total)}</text>
+    <text x="${cx}" y="${cy+14}" text-anchor="middle" font-size="10.5" fill="#94A3B8">总成本 (元)</text>`;
+  const legend = parts.map((p,i)=>{
+    const pct = (p.value/total*100).toFixed(1);
+    return `<div style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:9px">
+      <i style="width:9px;height:9px;border-radius:2px;background:${p.color}"></i>
+      <span style="color:var(--txt-2);width:52px">${p.name}</span>
+      <b class="mono" style="margin-left:auto">${money(p.value)}</b>
+      <span style="color:var(--txt-3);width:46px;text-align:right">${pct}%</span></div>`;
+  }).join('');
+  box.innerHTML = `<div style="display:flex;align-items:center;height:100%;gap:12px">
+    <svg width="${W*0.55}" height="${H}" viewBox="0 0 ${W*0.55} ${H}">${svg}</svg>
+    <div style="flex:1">${legend}</div></div>`;
+}
+
+/* ---------- FR-04 成本效益 ---------- */
+async function renderCost(){
+  const d = await api('/v1/stats/cost?limit=8');
+  if(!d || !d.total){
+    $('cost-kpis').innerHTML = '';
+    $('cost-donut').innerHTML = emptyBox('暂无成本数据','生成方案卡后才有成本与收益。');
+    $('cost-top').innerHTML = '';
+    $('cost-options').innerHTML = '';
+    return;
+  }
+  const t = d.total, b = d.breakdown;
+  $('cost-kpis').innerHTML = `
+    <div class="kpi g"><div class="l">净收益</div><div class="v">${money(t.net_benefit)}</div>
+      <div class="d">元 · 投入产出比 <i>${t.roi_pct}%</i></div></div>
+    <div class="kpi c"><div class="l">避免损失</div><div class="v">${money(t.avoided_loss)}</div>
+      <div class="d">元 · 故障停机折算</div></div>
+    <div class="kpi o"><div class="l">总成本</div><div class="v">${money(t.total_cost)}</div>
+      <div class="d">元 · 停机+人工+备件</div></div>
+    <div class="kpi"><div class="l">样本</div><div class="v">${d.sample_cards}</div>
+      <div class="d">张方案卡</div></div>`;
+
+  drawDonut($('cost-donut'), [
+    {name:'停机', value:b.downtime||0, color:'#E11D48'},
+    {name:'人工', value:b.labor||0, color:'#EA580C'},
+    {name:'备件', value:b.spare||0, color:'#1D4ED8'},
+  ]);
+
+  const top = d.by_asset || [];
+  const max = Math.max(...top.map(x=>Math.abs(x.net_benefit)), 1);
+  $('cost-top-sub').textContent = `按净收益排序 · ${top.length} 台`;
+  $('cost-top').innerHTML = top.length ? top.map(x=>`
+    <div style="display:flex;align-items:center;gap:11px;margin-bottom:13px">
+      <span class="mono" style="width:96px;font-size:12.5px;font-weight:600">${x.asset_id}</span>
+      <div style="flex:1;height:9px;border-radius:5px;background:#EDF1F7;overflow:hidden">
+        <div style="height:100%;width:${Math.abs(x.net_benefit)/max*100}%;border-radius:5px;
+          background:linear-gradient(90deg,#86EFAC,#16A34A)"></div></div>
+      <span class="mono" style="width:72px;text-align:right;font-size:12.5px;color:var(--green)">
+        ${money(x.net_benefit)}</span>
+      <span style="width:52px;text-align:right;font-size:11px;color:var(--txt-3)">${x.cards} 卡</span>
+    </div>`).join('') : emptyBox('暂无数据','');
+
+  const opts = d.by_option || [];
+  $('cost-options').innerHTML = opts.length ? opts.map(o=>`
+    <tr>
+      <td><b>${o.option_id}</b></td>
+      <td class="mono">${o.count}</td>
+      <td class="mono">${money(o.total_cost)}</td>
+      <td class="mono">${o.downtime_hours}h</td>
+      <td class="mono">${money(o.count?o.total_cost/o.count:0)}</td>
+    </tr>`).join('') : `<tr><td colspan="5">${emptyBox('暂无方案数据','')}</td></tr>`;
+}
+
+/* ---------- FR-05 组织产线 ---------- */
+async function renderOrg(){
+  const r = await api('/v1/org/tree');
+  const nodes = (r && r.nodes) || [];
+  if(!nodes.length){
+    $('org-kpis').innerHTML = '';
+    $('org-rows').innerHTML = `<tr><td colspan="9">${emptyBox('暂无组织数据','org_node 表为空。')}</td></tr>`;
+    return;
+  }
+  const sum = nodes.filter(n=>!n.parent_id)
+    .reduce((a,n)=>({assets:a.assets+n.asset_count,
+      red:a.red+n.levels.red, orange:a.orange+n.levels.orange,
+      none:a.none+n.levels.none}), {assets:0, red:0, orange:0, none:0});
+
+  $('org-kpis').innerHTML = `
+    <div class="kpi"><div class="l">组织节点</div><div class="v">${nodes.length}</div>
+      <div class="d">车间 / 产线 / 工位</div></div>
+    <div class="kpi c"><div class="l">覆盖设备</div><div class="v">${sum.assets}</div>
+      <div class="d">含子树汇总</div></div>
+    <div class="kpi r"><div class="l">红色设备</div><div class="v">${sum.red}</div>
+      <div class="d">需立即处置</div></div>
+    <div class="kpi o"><div class="l">橙色设备</div><div class="v">${sum.orange}</div>
+      <div class="d">计划检修</div></div>
+    <div class="kpi"><div class="l">未评估</div><div class="v">${sum.none}</div>
+      <div class="d">尚无健康度</div></div>`;
+
+  const typeCn = {WORKSHOP:'车间', LINE:'产线', STATION:'工位', SITE:'工厂', AREA:'区域'};
+  $('org-sub').textContent = `${nodes.length} 个节点 · 设备数含子树汇总`;
+  $('org-rows').innerHTML = nodes.map(n=>{
+    const L = n.levels;
+    const isLeaf = !nodes.some(x=>x.parent_id === n.node_id);
+    const indent = n.depth * 18;
+    return `<tr>
+      <td style="padding-left:${14 + indent}px">
+        <span style="color:var(--txt-3);margin-right:6px">${isLeaf?'·':'▾'}</span>
+        <b style="font-weight:${n.depth===0?600:500}">${n.name||n.node_id}</b>
+        <span class="mono" style="font-size:10.5px;color:var(--txt-3);margin-left:7px">${n.node_id}</span>
+      </td>
+      <td><span class="badge crit c">${typeCn[n.node_type]||n.node_type||'—'}</span></td>
+      <td class="mono" style="font-weight:600">${n.asset_count}</td>
+      <td class="mono" style="color:${L.red?'var(--red)':'var(--txt-3)'}">${L.red}</td>
+      <td class="mono" style="color:${L.orange?'var(--orange)':'var(--txt-3)'}">${L.orange}</td>
+      <td class="mono" style="color:${L.yellow?'var(--yellow)':'var(--txt-3)'}">${L.yellow}</td>
+      <td class="mono" style="color:${L.green?'var(--green)':'var(--txt-3)'}">${L.green}</td>
+      <td class="mono" style="color:var(--txt-3)">${L.none}</td>
+      <td style="text-align:right">
+        ${n.asset_count ? `<button class="btn sm" data-orgfilter="${n.node_id}">看设备</button>` : ''}
+      </td></tr>`;
+  }).join('');
+}
+
+/* ---------- FR-06 系统运维 ---------- */
+async function renderSystem(){
+  const [sys, hz, ev, ig, cache] = await Promise.all([
+    api('/v1/stats/system'),
+    api('/healthz'),
+    api('/events/stats'),
+    api('/integration/stats'),
+    api('/cache/stats'),
+  ]);
+  const tables = (sys && sys.tables) || [];
+  const failures = (ev && ev.failures) || 0;
+  const hasErr = !!(ev && ev.last_error);
+
+  $('sys-kpis').innerHTML = `
+    <div class="kpi ${hz && hz.status==='ok' ? 'g':'r'}"><div class="l">服务状态</div>
+      <div class="v" style="font-size:22px">${(hz && hz.status) || '未知'}</div>
+      <div class="d">${(hz && hz.version) || ''}</div></div>
+    <div class="kpi c"><div class="l">事件投递</div><div class="v">${(ev && ev.emitted)||0}</div>
+      <div class="d">${(ev && ev.transport) || '—'}</div></div>
+    <div class="kpi ${failures?'r':'g'}"><div class="l">投递失败</div><div class="v">${failures}</div>
+      <div class="d">${hasErr ? '有错误' : '无错误'}</div></div>
+    <div class="kpi"><div class="l">集成 Outbox</div><div class="v">${
+      ig && ig.SENT != null ? ig.SENT : Object.values(ig||{})[0] ?? '—'}</div>
+      <div class="d">${ig ? Object.keys(ig).join(' / ') : '—'}</div></div>`;
+
+  const maxRows = Math.max(...tables.map(t=>t.rows), 1);
+  $('sys-tables').innerHTML = tables.map(t=>{
+    const pct = t.rows > 0 ? Math.max(1.2, Math.log10(t.rows+1)/Math.log10(maxRows+1)*100) : 0;
+    const big = t.rows >= 1e6;
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <span class="mono" style="width:170px;font-size:12px;color:var(--txt-2)">${t.name}</span>
+      <div style="flex:1;height:7px;border-radius:4px;background:#EDF1F7;overflow:hidden">
+        <div style="height:100%;width:${pct}%;border-radius:4px;
+          background:${big?'linear-gradient(90deg,#A5B4FC,#4F46E5)':'#CBD5E1'}"></div></div>
+      <span class="mono" style="width:88px;text-align:right;font-size:12px;
+        color:${big?'var(--accent-2)':'var(--txt-2)'};font-weight:${big?600:400}">
+        ${t.rows>=0 ? (t.exact===false?'≈':'') + t.rows.toLocaleString() : 'ERR'}</span>
+    </div>`;
+  }).join('');
+
+  const row = (k,v,ok) => `<div style="display:flex;align-items:center;gap:9px;padding:7px 0;
+      border-bottom:1px dashed #EDF1F7;font-size:12.5px">
+      <span style="color:var(--txt-3);width:110px">${k}</span>
+      <span class="mono" style="color:${ok===false?'var(--red)':'var(--txt)'};flex:1">${v}</span></div>`;
+
+  $('sys-service').innerHTML =
+    row('健康检查', (hz && hz.status) || '—', hz && hz.status === 'ok') +
+    row('服务版本', (hz && hz.version) || '—') +
+    row('事件传输', (ev && ev.transport) || '—') +
+    row('已投递', (ev && ev.emitted) || 0) +
+    row('失败次数', failures, failures === 0) +
+    row('最后错误', (ev && ev.last_error) || '无', !hasErr);
+
+  const cacheKeys = cache && (cache.l1_size ?? cache.l1_keys ?? cache.size);
+  $('sys-integration').innerHTML =
+    row('Outbox 状态', ig ? JSON.stringify(ig) : '—') +
+    row('缓存键数', cacheKeys != null ? cacheKeys : '—') +
+    row('L2 启用', cache && cache.l2_enabled != null ? String(cache.l2_enabled) : '—');
+}
+
+/* ===== 启动 =====
+   两段式：先立即渲染当前视图（各视图自行拉所需数据），
+   再后台加载共享缓存 S.assets / S.cards，就绪后重绘一次。
+   原因：list_hot_assets(300) 需 4–5s，若阻塞则首屏白屏。 */
+let sharedReady = false;
 (async function(){
-  await loadAll();
-  route();
+  route();                       // 首屏立即出内容
+  try{
+    await loadAll();
+    sharedReady = true;
+    route();                     // 共享数据就绪，重绘一次
+  }catch(e){ console.warn('[boot] shared data load failed', e); }
 })();
 </script>
 </body>

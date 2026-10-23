@@ -426,3 +426,355 @@ def refresh_latest(tenant_id: str, asset_id: str, hi: float, level: str,
             "hi=VALUES(hi),level=VALUES(level),ts=VALUES(ts)",
             (tenant_id, asset_id, mp_count, rms, kurtosis, hi, level, ts),
         )
+
+
+# ---------------------------------------------------------------------------
+# 告警中心（FR-01）
+# ---------------------------------------------------------------------------
+_ALERT_RULES = (
+    # (rule_id, level, owner_role, sla_hours)
+    ("HI_CRITICAL", "red", "maintenance_supervisor", 4),      # HI < 40
+    ("HI_WARNING", "orange", "maintenance_supervisor", 24),   # 40 <= HI < 阈值
+)
+
+
+def sync_alerts(tenant_id: str, threshold_hi: float = 70.0,
+                limit: int = 200) -> dict[str, Any]:
+    """从当前健康状态生成告警（幂等）。
+
+    幂等键：同一 (asset_id, rule_id) 存在 OPEN/ACKED/ESCALATED 时不重复建单。
+    只对已有健康评估的设备建告警——没有 HI 就没有判断依据，不臆造。
+    """
+    rows = (
+        TenantQueryBuilder(tenant_id)
+        .query(
+            # 列名是 updated_at（不是 ts）；rul_p50_days 为剩余寿命中位数
+            "SELECT asset_id, hi, level, rul_p50_days, updated_at FROM read_asset_health "
+            "WHERE tenant_id=%s AND hi IS NOT NULL AND hi < %s "
+            "ORDER BY hi ASC LIMIT %s",
+            threshold_hi, limit,
+        )
+        .fetchall()
+    )
+
+    created = 0
+    skipped = 0
+    now = datetime.datetime.now()
+    with connect() as conn, conn.cursor() as cur:
+        for r in rows:
+            hi = float(r["hi"])
+            if hi < 40:
+                rule, lv, role, sla = _ALERT_RULES[0]
+                msg = f"{r['asset_id']} 健康指数 {hi:.1f}，低于临界阈值 40"
+                hint = "立即停机检查，按方案卡执行紧急维修"
+            else:
+                rule, lv, role, sla = _ALERT_RULES[1]
+                msg = f"{r['asset_id']} 健康指数 {hi:.1f}，低于关注阈值 {threshold_hi:.0f}"
+                hint = "安排计划检修窗口，检查振动与轴承状态"
+
+            cur.execute(
+                "SELECT alert_id FROM alert WHERE tenant_id=%s AND asset_id=%s "
+                "AND rule_id=%s AND status IN ('OPEN','ACKED','ESCALATED') LIMIT 1",
+                (tenant_id, r["asset_id"], rule),
+            )
+            if cur.fetchone():
+                skipped += 1
+                continue
+
+            alert_id = f"ALT-{now:%Y%m%d}-{os.urandom(3).hex().upper()}"
+            cur.execute(
+                "INSERT INTO alert(tenant_id,alert_id,asset_id,diag_id,level,rule_id,message,"
+                "action_hint,owner_role,sla_hours,status,created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'OPEN',%s)",
+                (tenant_id, alert_id, r["asset_id"], None, lv, rule, msg, hint, role, sla, now),
+            )
+            created += 1
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM alert WHERE tenant_id=%s "
+            "AND status IN ('OPEN','ACKED','ESCALATED')", (tenant_id,))
+        total_open = cur.fetchone()["n"]
+
+    return {"created": created, "skipped": skipped, "total_open": total_open}
+
+
+def list_alerts(tenant_id: str, status: str = "", level: str = "",
+                limit: int = 100) -> list[dict[str, Any]]:
+    """告警列表，按 SLA 剩余时间升序（超时优先）。"""
+    sql = ("SELECT alert_id, asset_id, level, rule_id, message, action_hint, owner_role, "
+           "sla_hours, status, ack_by, ack_action, created_at, escalated_at "
+           "FROM alert WHERE tenant_id=%s")
+    params: list[Any] = []
+    if status:
+        marks = ",".join(["%s"] * len(status.split(",")))
+        sql += f" AND status IN ({marks})"
+        params.extend(status.split(","))
+    if level:
+        sql += " AND level=%s"
+        params.append(level)
+    sql += " ORDER BY created_at DESC LIMIT %s"
+    params.append(limit)
+
+    # pymysql 的 fetchall() 返回 tuple，需转 list 才能排序
+    rows = list(TenantQueryBuilder(tenant_id).query(sql, *params).fetchall())
+    now = datetime.datetime.now()
+    for r in rows:
+        created = r.get("created_at")
+        if isinstance(created, datetime.datetime):
+            age_h = (now - created).total_seconds() / 3600
+            r["age_hours"] = round(age_h, 1)
+            r["sla_remaining_hours"] = round(float(r.get("sla_hours") or 0) - age_h, 1)
+            r["overdue"] = r["sla_remaining_hours"] < 0
+    rows.sort(key=lambda x: (not x.get("overdue"), x.get("sla_remaining_hours", 999)))
+    return rows
+
+
+def ack_alert(tenant_id: str, alert_id: str, action: str, by: str,
+              comment: str = "") -> dict[str, Any]:
+    """处置告警：ack / escalate / close。"""
+    mapping = {"ack": "ACKED", "escalate": "ESCALATED", "close": "CLOSED"}
+    if action not in mapping:
+        raise ValueError(f"unknown action: {action}")
+
+    row = (
+        TenantQueryBuilder(tenant_id)
+        .query("SELECT alert_id, status FROM alert WHERE tenant_id=%s AND alert_id=%s", alert_id)
+        .fetchone()
+    )
+    if row is None:
+        raise ValueError(f"alert not found: {alert_id}")
+    if row["status"] == "CLOSED":
+        raise ValueError("alert already closed")
+
+    new_status = mapping[action]
+    now = datetime.datetime.now()
+    with connect() as conn, conn.cursor() as cur:
+        if action == "escalate":
+            cur.execute(
+                "UPDATE alert SET status=%s, ack_by=%s, ack_action=%s, escalated_at=%s "
+                "WHERE tenant_id=%s AND alert_id=%s",
+                (new_status, by, comment or "escalate", now, tenant_id, alert_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE alert SET status=%s, ack_by=%s, ack_action=%s "
+                "WHERE tenant_id=%s AND alert_id=%s",
+                (new_status, by, comment or action, tenant_id, alert_id),
+            )
+    return {"alert_id": alert_id, "status": new_status, "by": by}
+
+
+# ---------------------------------------------------------------------------
+# 诊断历史（FR-03）
+# ---------------------------------------------------------------------------
+def list_diagnoses(tenant_id: str, asset_id: str = "",
+                   limit: int = 50) -> list[dict[str, Any]]:
+    import json
+
+    sql = ("SELECT diag_id, asset_id, hi, level, degraded, degraded_reason, "
+           "contributions, model_name, model_version, created_at "
+           "FROM diagnosis WHERE tenant_id=%s")
+    params: list[Any] = []
+    if asset_id:
+        sql += " AND asset_id LIKE %s"
+        params.append(f"{asset_id}%")
+    sql += " ORDER BY created_at DESC LIMIT %s"
+    params.append(limit)
+
+    rows = TenantQueryBuilder(tenant_id).query(sql, *params).fetchall()
+    for r in rows:
+        if isinstance(r.get("contributions"), str):
+            try:
+                r["contributions"] = json.loads(r["contributions"])
+            except Exception:  # noqa: BLE001
+                r["contributions"] = []
+        if isinstance(r.get("hi"), str):
+            r["hi"] = float(r["hi"])
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# 成本效益（FR-04）
+# ---------------------------------------------------------------------------
+def cost_stats(tenant_id: str, top_n: int = 10) -> dict[str, Any]:
+    """从方案卡的 economics / options.cost 聚合成本效益。"""
+    import json
+
+    rows = (
+        TenantQueryBuilder(tenant_id)
+        .query(
+            "SELECT card_id, asset_id, verdict, economics, options FROM recommendation_card "
+            "WHERE tenant_id=%s",
+        )
+        .fetchall()
+    )
+
+    tot = {"avoided_loss": 0.0, "total_cost": 0.0, "net_benefit": 0.0}
+    breakdown = {"downtime": 0.0, "labor": 0.0, "spare": 0.0}
+    by_asset: dict[str, dict[str, float]] = {}
+    by_option: dict[str, dict[str, Any]] = {}
+
+    for r in rows:
+        try:
+            eco = json.loads(r["economics"]) if isinstance(r["economics"], str) else (r["economics"] or {})
+        except Exception:  # noqa: BLE001
+            eco = {}
+        al = float(eco.get("avoided_loss") or 0)
+        tc = float(eco.get("total_cost") or 0)
+        nb = float(eco.get("net_benefit") or 0)
+        tot["avoided_loss"] += al
+        tot["total_cost"] += tc
+        tot["net_benefit"] += nb
+
+        a = by_asset.setdefault(r["asset_id"], {"avoided_loss": 0.0, "total_cost": 0.0,
+                                                "net_benefit": 0.0, "cards": 0})
+        a["avoided_loss"] += al
+        a["total_cost"] += tc
+        a["net_benefit"] += nb
+        a["cards"] += 1
+
+        try:
+            opts = json.loads(r["options"]) if isinstance(r["options"], str) else (r["options"] or [])
+        except Exception:  # noqa: BLE001
+            opts = []
+        # 成本构成只统计「主方案」（options[0]）：economics.total_cost 对应的就是它。
+        # 若把所有备选方案都累加，breakdown 之和会远大于 total_cost，
+        # 两个口径不一致会误导使用者。by_option 仍保留全部方案用于对比。
+        if opts:
+            c = (opts[0] or {}).get("cost") or {}
+            breakdown["downtime"] += float(c.get("downtime") or 0)
+            breakdown["labor"] += float(c.get("labor") or 0)
+            breakdown["spare"] += float(c.get("spare") or 0)
+
+        for o in opts:
+            c = (o or {}).get("cost") or {}
+            oid = o.get("option_id") or "未命名"
+            b = by_option.setdefault(oid, {"option_id": oid, "count": 0,
+                                           "total_cost": 0.0, "downtime_hours": 0.0})
+            b["count"] += 1
+            b["total_cost"] += float(c.get("total") or 0)
+            b["downtime_hours"] += float(o.get("downtime_hours") or 0)
+
+    roi = (tot["net_benefit"] / tot["total_cost"] * 100) if tot["total_cost"] else 0.0
+    ranked = sorted(by_asset.items(), key=lambda kv: kv[1]["net_benefit"], reverse=True)
+    return {
+        "sample_cards": len(rows),
+        "total": {**{k: round(v, 2) for k, v in tot.items()}, "roi_pct": round(roi, 1)},
+        "breakdown": {k: round(v, 2) for k, v in breakdown.items()},
+        "by_asset": [{"asset_id": k, **{kk: round(vv, 2) if isinstance(vv, float) else vv
+                                        for kk, vv in v.items()}}
+                     for k, v in ranked[:top_n]],
+        "by_option": sorted(by_option.values(), key=lambda x: x["total_cost"], reverse=True),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 组织与产线（FR-05）
+# ---------------------------------------------------------------------------
+def org_tree(tenant_id: str) -> list[dict[str, Any]]:
+    """组织树 + 各节点（含子树）设备数与健康分布。"""
+    nodes = (
+        TenantQueryBuilder(tenant_id)
+        .query("SELECT node_id, parent_id, node_type, name, path FROM org_node WHERE tenant_id=%s")
+        .fetchall()
+    )
+    health = (
+        TenantQueryBuilder(tenant_id)
+        .query(
+            # level 在 read_asset_health，不在 asset；用左连接，未评估的设备记为 none
+            "SELECT a.asset_id AS asset_id, a.node_id AS node_id, h.level AS level "
+            "FROM asset a LEFT JOIN read_asset_health h "
+            "ON a.tenant_id=h.tenant_id AND a.asset_id=h.asset_id "
+            "WHERE a.tenant_id=%s",
+        )
+        .fetchall()
+    )
+
+    # 设备按 node_id 归集
+    direct: dict[str, dict[str, int]] = {}
+    for a in health:
+        nid = a.get("node_id") or ""
+        d = direct.setdefault(nid, {"total": 0, "red": 0, "orange": 0,
+                                    "yellow": 0, "green": 0, "none": 0})
+        d["total"] += 1
+        lv = a.get("level") or "none"
+        d[lv if lv in d else "none"] += 1
+
+    children: dict[str, list[str]] = {}
+    for n in nodes:
+        children.setdefault(n.get("parent_id") or "", []).append(n["node_id"])
+
+    def aggregate(nid: str) -> dict[str, int]:
+        acc = dict(direct.get(nid, {"total": 0, "red": 0, "orange": 0,
+                                    "yellow": 0, "green": 0, "none": 0}))
+        for c in children.get(nid, []):
+            sub = aggregate(c)
+            for k in acc:
+                acc[k] += sub[k]
+        return acc
+
+    depth_map: dict[str, int] = {}
+
+    def depth(nid: str, d: int = 0) -> int:
+        depth_map[nid] = d
+        for c in children.get(nid, []):
+            depth(c, d + 1)
+        return d
+
+    for n in nodes:
+        if not n.get("parent_id"):
+            depth(n["node_id"], 0)
+
+    out = []
+    for n in nodes:
+        agg = aggregate(n["node_id"])
+        out.append({
+            "node_id": n["node_id"], "parent_id": n.get("parent_id"),
+            "node_type": n.get("node_type"), "name": n.get("name"),
+            "depth": depth_map.get(n["node_id"], 0),
+            "asset_count": agg["total"],
+            "levels": {k: agg[k] for k in ("red", "orange", "yellow", "green", "none")},
+        })
+    out.sort(key=lambda x: (x["depth"], x["node_id"]))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 系统运维（FR-06）
+# ---------------------------------------------------------------------------
+def system_stats(tenant_id: str) -> dict[str, Any]:
+    """核心表规模。仅统计行数，不含任何业务内容，故不走 TenantQueryBuilder。
+
+    性能注意：feature_point 有 1 亿行，COUNT(*) 要扫全表（数秒），
+    会让 /v1/stats/system 卡住首屏。策略：先取 information_schema 的估算行数，
+    小于 500 万行的表才做精确 COUNT，大表直接用估算值并标记 exact=False。
+    """
+    tables = ("asset", "component", "measurement_point", "feature_point",
+              "diagnosis", "recommendation_card", "card_confirmation",
+              "alert", "read_asset_health", "read_asset_health_history",
+              "integration_outbox", "processed_event")
+    out = []
+    with connect() as conn, conn.cursor() as cur:
+        est: dict[str, int] = {}
+        try:
+            cur.execute(
+                "SELECT table_name AS tn, table_rows AS tr FROM information_schema.tables "
+                "WHERE table_schema='pdm'")
+            for r in cur.fetchall():
+                est[str(r["tn"])] = int(r["tr"] or 0)
+        except Exception:  # noqa: BLE001
+            est = {}
+
+        for t in tables:
+            guess = est.get(t)
+            try:
+                if guess is not None and guess >= 5_000_000:
+                    # 大表用估算，避免全表扫描
+                    out.append({"name": t, "rows": guess, "exact": False})
+                else:
+                    cur.execute(f"SELECT COUNT(*) AS n FROM `{t}`")
+                    out.append({"name": t, "rows": int(cur.fetchone()["n"]), "exact": True})
+            except Exception as exc:  # noqa: BLE001
+                out.append({"name": t, "rows": guess if guess is not None else -1,
+                            "exact": False, "error": str(exc)[:60]})
+    return {"tables": out}
