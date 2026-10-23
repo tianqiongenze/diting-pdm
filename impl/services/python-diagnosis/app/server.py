@@ -194,21 +194,39 @@ async def consult_endpoint(request: Request) -> dict[str, Any]:
             tenant, asset_id, diag, snap, opinions, evaluation, spare, crew, plan,
             downtime_cost_per_hour=float(payload.get("downtime_cost_per_hour", 6000.0)),
         )
+        # 先落库再做后续动作：去重窗口内同设备同 verdict 会复用已有卡，
+        # 必须先拿到「实际生效的 card_id」，否则 EAM 会为一张并未新建的卡
+        # 重复建工单（幂等键是 card:{id}，id 不同就绕过了幂等）。
+        deduplicated = False
+        if os.getenv("PDM_DB_ENABLED", "1") == "1":
+            try:
+                effective_id = repository.save_recommendation_card(tenant, card)
+                if effective_id and effective_id != card.get("card_id"):
+                    card["card_id"] = effective_id
+                    card["deduplicated"] = True
+                    deduplicated = True
+                    # 复用旧卡时必须回填真实状态：新建卡的 human_confirm.status
+                    # 恒为 PENDING，而旧卡可能已 CONFIRMED/REJECTED。
+                    # 不回填会让前端显示"待确认"、点确认却收到 409。
+                    old = repository.get_recommendation_card(tenant, effective_id)
+                    if old:
+                        card["human_confirm"]["status"] = old.get("status", "PENDING")
+                        card["human_confirm"]["confirmed_roles"] = \
+                            repository.list_confirmed_roles(tenant, effective_id)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[warn] card persist failed: {exc}", flush=True)
+
         # 红色等级即触发工单预入队（不等人工确认，避免延误）
         # 理由：ACT_NOW 等级下等确认会错过 4h SLA，先建单后由人工确认/撤销
-        if os.getenv("PDM_EAM_ENABLED", "1") == "1" and card.get("verdict") == "ACT_NOW":
+        # 去重复用时跳过——该卡此前已入队过，再入会重复建单
+        if (os.getenv("PDM_EAM_ENABLED", "1") == "1"
+                and card.get("verdict") == "ACT_NOW" and not deduplicated):
             try:
                 integration.enqueue(tenant, "eam", "workOrder.create",
                                     f"card:{card['card_id']}",
                                     integration.work_order_payload_from_card(card, tenant))
             except Exception as exc:  # noqa: BLE001
                 print(f"[warn] eam enqueue failed: {exc}", flush=True)
-        # 方案卡落库 + 工单闭环起点（同步段，随后统一在 async 侧执行）
-        if os.getenv("PDM_DB_ENABLED", "1") == "1":
-            try:
-                repository.save_recommendation_card(tenant, card)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[warn] card persist failed: {exc}", flush=True)
 
         events.emit(
             "com.yadea.pdm.decision.cardCreated.v1",

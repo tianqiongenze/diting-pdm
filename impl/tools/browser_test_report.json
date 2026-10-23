@@ -1,8 +1,8 @@
 {
-  "time": "2026-10-23T09:52:42",
+  "time": "2026-10-23T10:20:03",
   "duration_s": 21.8,
-  "total": 46,
-  "passed": 46,
+  "total": 48,
+  "passed": 48,
   "failed": 0,
   "failures": [],
   "results": [
@@ -54,7 +54,7 @@
     {
       "name": "A1.3 KPI 已填充数值",
       "pass": true,
-      "detail": "{\"k-assets\": \"20\", \"k-cards\": \"20\", \"k-red\": \"1\", \"k-orange\": \"0\", \"k-yellow\": \"1\", \"k-transport\": \"pulsar\"}"
+      "detail": "{\"k-assets\": \"20\", \"k-cards\": \"2\", \"k-red\": \"1\", \"k-orange\": \"0\", \"k-yellow\": \"1\", \"k-transport\": \"pulsar\"}"
     },
     {
       "name": "A1.4 热点设备表有数据行",
@@ -69,17 +69,17 @@
     {
       "name": "A2.2 诊断结果已渲染",
       "pass": true,
-      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 23ms）  维度\t得分\t权重\t影响\t证据 imp\t1.000\t0.2\t100."
+      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 27ms）  维度\t得分\t权重\t影响\t证据 imp\t1.000\t0.2\t100."
     },
     {
       "name": "A2.3 结果含健康指数 HI",
       "pass": true,
-      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 23ms）  维度\t得分\t权重\t影响\t证"
+      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 27ms）  维度\t得分\t权重\t影响\t证"
     },
     {
       "name": "A2.4 结果含等级",
       "pass": true,
-      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 23ms）  维度\t得分\t权重\t影响\t证"
+      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 27ms）  维度\t得分\t权重\t影响\t证"
     },
     {
       "name": "A3.1 找到趋势按钮",
@@ -99,7 +99,7 @@
     {
       "name": "A3.4 趋势说明已更新",
       "pass": true,
-      "detail": "AGV-00006 · 70 点（原始 70 行，抽样步长 1）"
+      "detail": "AGV-00006 · 105 点（原始 105 行，抽样步长 1）"
     },
     {
       "name": "A4.1 找到会诊按钮",
@@ -109,7 +109,7 @@
     {
       "name": "A4.2 方案卡已生成",
       "pass": true,
-      "detail": "REC-20261023-96E01C\tAGV-00006\t健康指数 71.2（yellow），主要贡献 vib\tMONITOR\t中\t待确认\t确认 REC-20261023-11E"
+      "detail": "REC-20261023-111CE3\tAGV-00006\t健康指数 71.2（yellow），主要贡献 vib\tMONITOR\t中\t已确认\t REC-20261023-B0416"
     },
     {
       "name": "A5.1 无 JS 运行时异常",
@@ -120,6 +120,16 @@
       "name": "A5.2 无资源加载失败(4xx/5xx)",
       "pass": true,
       "detail": ""
+    },
+    {
+      "name": "A6.1 线上看板含最新功能（诊断/趋势/方案卡）",
+      "pass": true,
+      "detail": "全部存在"
+    },
+    {
+      "name": "A6.2 本地看板文件非空",
+      "pass": true,
+      "detail": "14536 bytes, sha=8aeb48045f5b"
     },
     {
       "name": "B1.1 /healthz",
@@ -134,12 +144,12 @@
     {
       "name": "B1.3 /events/stats 传输层",
       "pass": true,
-      "detail": "{\"enabled\": true, \"transport\": \"pulsar\", \"emitted\": 22, \"failures\": 0, \"last_error\": null}"
+      "detail": "{\"enabled\": true, \"transport\": \"pulsar\", \"emitted\": 1, \"failures\": 0, \"last_error\": null}"
     },
     {
       "name": "B1.4 /integration/stats",
       "pass": true,
-      "detail": "{\"SENT\": 7}"
+      "detail": "{\"SENT\": 8}"
     },
     {
       "name": "B2.1 /v1/diagnose",
@@ -159,30 +169,30 @@
     {
       "name": "B2.4 诊断含 trace_id",
       "pass": true,
-      "detail": "fb2101f0-7d5f-4234-b9ad-022c6136dffc"
+      "detail": "5da2d2fc-4426-4549-b533-8987841e61fa"
     },
     {
       "name": "B3.1 /v1/consult 生成方案卡",
       "pass": true,
-      "detail": "REC-20261023-B04161 verdict=ACT_NOW"
+      "detail": "REC-20261023-B04161 verdict=ACT_NOW asset=FAN-00004"
     },
     {
       "name": "B3.2 /v1/cards 列表",
       "pass": true,
-      "detail": "count=5"
+      "detail": "count=2"
     },
     {
-      "name": "B3.3.0 确认 maintenance_supervisor",
+      "name": "B3.1b 同设备再会诊复用同一卡（去重生效）",
       "pass": true,
-      "detail": "status=PENDING"
+      "detail": "REC-20261023-B04161 vs REC-20261023-B04161"
     },
     {
-      "name": "B3.3.1 确认 equipment_manager",
+      "name": "B3.3 卡片已是终态（去重复用旧卡）",
       "pass": true,
       "detail": "status=CONFIRMED"
     },
     {
-      "name": "B3.4 重复确认返回 409",
+      "name": "B3.4 终态重复确认返回 409",
       "pass": true,
       "detail": "HTTP 409"
     },
@@ -194,7 +204,7 @@
     {
       "name": "B4.1 /v1/assets/{id}/trend",
       "pass": true,
-      "detail": "points=6"
+      "detail": "points=9"
     },
     {
       "name": "B4.2 趋势缺租户头 400",
@@ -224,7 +234,7 @@
     {
       "name": "C1.3 关键度统计",
       "pass": true,
-      "detail": "{\"distribution\":[{\"criticality\":\"A\",\"n\":240},{\"criticality\":\"C\",\"n\":640},{\"criticality\":\"B\",\"n\":320}"
+      "detail": "{\"distribution\":[{\"criticality\":\"C\",\"n\":640},{\"criticality\":\"B\",\"n\":320},{\"criticality\":\"A\",\"n\":240}"
     },
     {
       "name": "C1.4 不存在资产 404",

@@ -232,13 +232,40 @@ def get_snapshot(tenant_id: str, asset_id: str) -> dict[str, Any] | None:
     )
 
 
-def save_recommendation_card(tenant_id: str, card: dict[str, Any]) -> str:
-    """落库方案卡（recommendation_card）。返回 card_id。"""
+def save_recommendation_card(tenant_id: str, card: dict[str, Any],
+                             dedup_minutes: int | None = None) -> str:
+    """落库方案卡（recommendation_card）。返回实际生效的 card_id。
+
+    去重：同一设备 + 同一 verdict 在窗口期内（默认 30 分钟，环境变量
+    PDM_CARD_DEDUP_MINUTES 可调）已有卡片时**复用**该卡，不再新建。
+
+    为什么需要：/v1/consult 是幂等查询型接口，重复调用（刷新看板、
+    重跑测试）会不断堆积同一设备的相同结论卡片。曾因此在演示环境
+    积累 20 张同设备卡，看板一片重复。设 0 可关闭去重。
+    """
+    import datetime
     import json
+    import os
 
     card_id = card["card_id"]
-    options = card.get("options") or []
+    verdict = card.get("verdict", "MONITOR")
+    window = (dedup_minutes if dedup_minutes is not None
+              else int(os.getenv("PDM_CARD_DEDUP_MINUTES", "30")))
+
     with connect() as conn, conn.cursor() as cur:
+        if window > 0:
+            since = datetime.datetime.now() - datetime.timedelta(minutes=window)
+            cur.execute(
+                "SELECT card_id FROM recommendation_card "
+                "WHERE tenant_id=%s AND asset_id=%s AND verdict=%s AND created_at >= %s "
+                "ORDER BY created_at DESC LIMIT 1",
+                (tenant_id, card["asset_id"], verdict, since),
+            )
+            row = cur.fetchone()
+            if row:
+                return row["card_id"] if isinstance(row, dict) else row[0]
+
+        options = card.get("options") or []
         cur.execute(
             "INSERT IGNORE INTO recommendation_card(tenant_id, card_id, asset_id, diag_id, conclusion, "
             "confidence, options, economics, conflicts, verdict, risk_level, required_roles, status) "
@@ -249,7 +276,7 @@ def save_recommendation_card(tenant_id: str, card: dict[str, Any]) -> str:
                 json.dumps(options, ensure_ascii=False),
                 json.dumps(card["economics"], ensure_ascii=False),
                 json.dumps(card.get("conflicts", []), ensure_ascii=False),
-                card.get("verdict", "MONITOR"), card.get("risk_level", "中"),
+                verdict, card.get("risk_level", "中"),
                 json.dumps(card["human_confirm"]["required_roles"], ensure_ascii=False),
                 card["human_confirm"]["status"],
             ),
@@ -267,6 +294,17 @@ def get_recommendation_card(tenant_id: str, card_id: str) -> dict[str, Any] | No
         .fetchall()
     )
     return rows[0] if rows else None
+
+
+def list_confirmed_roles(tenant_id: str, card_id: str) -> list[str]:
+    """已确认的角色列表（去重复用旧卡时回填用）。"""
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT role FROM card_confirmation "
+            "WHERE tenant_id=%s AND card_id=%s AND decision='confirm'",
+            (tenant_id, card_id),
+        )
+        return [r["role"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
 
 
 def confirm_recommendation_card(tenant_id: str, card_id: str, role: str,

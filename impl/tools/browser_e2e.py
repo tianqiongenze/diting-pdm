@@ -24,8 +24,13 @@ import httpx
 from playwright.sync_api import sync_playwright
 
 CHROME = r"C:\Users\Lenovo\.agent-browser\browsers\chrome-156.0.8078.47\chrome.exe"
-BASE = "http://127.0.0.1:18080"           # python-diagnosis（本地代理）
-JAVA = "http://127.0.0.1:18081"           # java-asset（ssh 转发）
+# A 组（浏览器）走本地代理：浏览器无法自定义 Host 头
+BASE = "http://127.0.0.1:18080"
+# B/C 组（httpx）直接打 Ingress：httpx 可设 Host 头，无需代理/隧道
+NODE = "http://10.167.2.175:32231"
+INGRESS_HOST = "pdm-api.10.167.2.175.nip.io"
+API = NODE + "/pdm-api"
+JAVA = NODE + "/pdm-asset"
 SHOTS = os.path.join(os.path.dirname(__file__), "..", "..", "browser_test_shots")
 
 RESULTS: list[dict] = []
@@ -170,6 +175,24 @@ def test_dashboard(pw) -> None:
     real_bad = [b for b in bad_responses if "favicon" not in b.lower()]
     check("A5.2 无资源加载失败(4xx/5xx)", not real_bad, "; ".join(real_bad[:3])[:120])
 
+    # --- A6 部署一致性（看板走 ConfigMap 挂载，代码新≠线上新）---
+    import hashlib
+    import pathlib
+
+    local = pathlib.Path(__file__).parent.parent / "deploy" / "k8s" / "dashboard-index.html"
+    if local.exists():
+        raw = local.read_bytes()
+        local_sha = hashlib.sha256(raw).hexdigest()
+        served = page.content()
+        needed = ("function diag", "function trend", 'id="trend"', "confirmCard")
+        missing = [k for k in needed if k not in served]
+        check("A6.1 线上看板含最新功能（诊断/趋势/方案卡）", not missing,
+              "缺失: " + ",".join(missing) if missing else "全部存在")
+        check("A6.2 本地看板文件非空", len(raw) > 1000,
+              f"{len(raw)} bytes, sha={local_sha[:12]}")
+    else:
+        check("A6.1 本地看板文件存在", False, str(local))
+
     browser.close()
 
 
@@ -179,7 +202,8 @@ def test_dashboard(pw) -> None:
 def test_api() -> None:
     print("\n===== B. API 全端点 =====", flush=True)
     # 服务端多租户：除 /healthz /version /events/stats 外都要求 X-Tenant-Id
-    c = httpx.Client(base_url=BASE, timeout=40, headers={"X-Tenant-Id": "site-a"},
+    c = httpx.Client(base_url=API, timeout=40,
+                     headers={"X-Tenant-Id": "site-a", "Host": INGRESS_HOST},
                      limits=httpx.Limits(max_keepalive_connections=0))
 
     r = c.get("/healthz")
@@ -211,20 +235,30 @@ def test_api() -> None:
     check("B2.4 诊断含 trace_id", bool(d.get("trace_id")), str(d.get("trace_id"))[:40])
 
     # 会诊（落库）
-    r = c.post("/v1/consult", json={"tenant_id": "site-a", "asset_id": "FAN-00004"})
+    # 用真实设备（有诊断快照）；去重窗口内会复用已有卡，
+    # 故确认流程按卡片当前状态自适应（见 B3.3）
+    uniq_asset = "FAN-00004"
+    r = c.post("/v1/consult", json={"tenant_id": "site-a", "asset_id": uniq_asset})
     card = r.json().get("card", {})
     check("B3.1 /v1/consult 生成方案卡", r.status_code == 200 and card.get("card_id"),
-          f"{card.get('card_id')} verdict={card.get('verdict')}")
+          f"{card.get('card_id')} verdict={card.get('verdict')} asset={uniq_asset}")
 
     # 列表
     r = c.get("/v1/cards?limit=5")
     check("B3.2 /v1/cards 列表", r.status_code == 200 and r.json().get("count", 0) > 0,
           f"count={r.json().get('count')}")
 
-    # 确认（角色驱动）
+    # 去重：同设备同 verdict 再会诊应复用同一张卡
+    r_dup = c.post("/v1/consult", json={"tenant_id": "site-a", "asset_id": uniq_asset})
+    check("B3.1b 同设备再会诊复用同一卡（去重生效）",
+          r_dup.json().get("card", {}).get("card_id") == card.get("card_id"),
+          f"{r_dup.json().get('card', {}).get('card_id')} vs {card.get('card_id')}")
+
+    # 确认（角色驱动，按卡片当前状态自适应）
     cid = card.get("card_id", "")
     roles = card.get("human_confirm", {}).get("required_roles", [])
-    if cid and roles:
+    cur_status = card.get("human_confirm", {}).get("status", "")
+    if cid and roles and cur_status == "PENDING":
         for i, role in enumerate(roles):
             rr = c.post(f"/v1/cards/{cid}/confirm",
                         json={"role": role, "user_id": f"browser-e2e-{i}", "decision": "confirm"})
@@ -234,6 +268,12 @@ def test_api() -> None:
         rr = c.post(f"/v1/cards/{cid}/confirm",
                     json={"role": roles[0], "user_id": "dup", "decision": "confirm"})
         check("B3.4 重复确认返回 409", rr.status_code == 409, f"HTTP {rr.status_code}")
+    elif cid and roles:
+        # 卡已被确认过（去重复用）：验证终态不可再确认
+        check("B3.3 卡片已是终态（去重复用旧卡）", cur_status == "CONFIRMED", f"status={cur_status}")
+        rr = c.post(f"/v1/cards/{cid}/confirm",
+                    json={"role": roles[0], "user_id": "dup", "decision": "confirm"})
+        check("B3.4 终态重复确认返回 409", rr.status_code == 409, f"HTTP {rr.status_code}")
     rr = c.post("/v1/cards/NOPE-999/confirm",
                 json={"role": "maintenance_supervisor", "user_id": "x", "decision": "confirm"})
     check("B3.5 不存在卡片返回 409", rr.status_code == 409, f"HTTP {rr.status_code}")
@@ -243,7 +283,7 @@ def test_api() -> None:
     d = r.json()
     check("B4.1 /v1/assets/{id}/trend", r.status_code == 200 and "series" in d,
           f"points={d.get('points')}")
-    bare = httpx.Client(base_url=BASE, timeout=20)
+    bare = httpx.Client(base_url=API, timeout=20, headers={"Host": INGRESS_HOST})
     r2 = bare.get("/v1/assets/FAN-00004/trend")
     check("B4.2 趋势缺租户头 400", r2.status_code == 400, f"HTTP {r2.status_code}")
     bare.close()
@@ -260,7 +300,7 @@ def test_api() -> None:
 # ---------------------------------------------------------------------------
 def test_java() -> None:
     print("\n===== C. java-asset 资产服务 =====", flush=True)
-    h = {"X-Tenant-Id": "site-a"}
+    h = {"X-Tenant-Id": "site-a", "Host": INGRESS_HOST}
     c = httpx.Client(base_url=JAVA, timeout=30,
                      limits=httpx.Limits(max_keepalive_connections=0))
 
@@ -283,7 +323,7 @@ def test_java() -> None:
     r = c.get("/api/v1/assets/NOPE-1", headers=h)
     check("C1.4 不存在资产 404", r.status_code == 404, f"HTTP {r.status_code}")
 
-    r = c.get("/api/v1/assets", headers={})
+    r = c.get("/api/v1/assets", headers={"Host": INGRESS_HOST})
     check("C1.5 缺租户头被拒", r.status_code in (400, 401, 403, 404),
           f"HTTP {r.status_code}")
     c.close()

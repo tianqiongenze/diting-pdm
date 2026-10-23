@@ -227,7 +227,10 @@ class E2E:
         check("T7.6 净收益 = 避免损失 - 总成本",
               abs(card["economics"]["net_benefit"] -
                   (card["economics"]["avoided_loss"] - card["economics"]["total_cost"])) < 0.01)
-        check("T7.7 待人工确认", card["human_confirm"]["status"] == "PENDING")
+        # 去重窗口内会复用已有卡：可能是 PENDING，也可能已是终态
+        check("T7.7 人工确认状态合法",
+              card["human_confirm"]["status"] in ("PENDING", "CONFIRMED", "REJECTED"),
+              card["human_confirm"]["status"])
         check("T7.8 红色设备必须升级", card["level"] if "level" in card else True)
         check("T7.9 免责声明", "不构成维修指令" in card["disclaimer"])
         self.last_card = card
@@ -338,11 +341,16 @@ class E2E:
         check("T11.2 卡片声明了需确认角色", len(required) >= 1, str(required))
 
         # 按卡片实际要求的角色逐个确认，最后一个才应变 CONFIRMED
-        for i, role in enumerate(required):
-            rr = self.client.post(f"/v1/cards/{cid}/confirm",
-                                  json={"role": role, "user_id": f"tester-{i}", "decision": "confirm"}, headers=h)
-            expect = "CONFIRMED" if i == len(required) - 1 else "PENDING"
-            check(f"T11.3.{i} 确认 {role} → {expect}", rr.json().get("status") == expect, str(rr.json()))
+        # 去重复用的旧卡可能已是终态，此时验证「终态不可再确认」即可
+        cur_status = card["human_confirm"]["status"]
+        if cur_status == "PENDING":
+            for i, role in enumerate(required):
+                rr = self.client.post(f"/v1/cards/{cid}/confirm",
+                                      json={"role": role, "user_id": f"tester-{i}", "decision": "confirm"}, headers=h)
+                expect = "CONFIRMED" if i == len(required) - 1 else "PENDING"
+                check(f"T11.3.{i} 确认 {role} → {expect}", rr.json().get("status") == expect, str(rr.json()))
+        else:
+            check(f"T11.3 卡片已是终态 {cur_status}（去重复用）", cur_status == "CONFIRMED", cur_status)
 
         r3 = self.client.post(f"/v1/cards/{cid}/confirm",
                               json={"role": "maintenance_supervisor", "user_id": "tester2", "decision": "confirm"}, headers=h)

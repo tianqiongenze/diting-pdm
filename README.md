@@ -108,7 +108,9 @@
 | **28** | `docs/28_事故报告_共享TiDB数据丢失.md` | INC-01 · 备份范围盲区 | 已出 |
 | **29** | `docs/29_事故报告_pdm库被孤儿BR任务误删.md` | INC-02 · 后台任务生死判定 | 已出 |
 | **30** | `docs/30_课程平台数据回填完成报告.md` | 101,604,452 行 · 质量验证 · 7 个坑 | 已出 |
-| **31** | `docs/31_无头浏览器全端全链路测试报告.md` | 46/46 · 3 个真实缺陷 · 浏览器层价值 | **最新** |
+| **31** | `docs/31_无头浏览器全端全链路测试报告.md` | 46/46 · 3 个真实缺陷 · 浏览器层价值 | 已出 |
+| **32** | `docs/32_局域网人工测试操作指南.md` | 访问地址 · 逐项步骤 · 预期结果 · 记录表 | **最新** |
+| **33** | `docs/33_遗留项清零与人工测试就绪报告.md` | 网络根因 · 部署自动化 · 卡片去重 | **最新** |
 | — | `index-v2.html` | v1.0 评分与优化总览（汇报用） | **v1.0 新增** |
 
 ---
@@ -161,20 +163,32 @@
 | 层 | 覆盖 | 结果 |
 |---|---|---|
 | E2E（httpx） | Pulsar / 备份清理 / 方案卡多角色确认 / 趋势 API / EAM 重试 / 看板鉴权 | **66/66** |
-| **无头浏览器**（Playwright + Chromium） | 看板渲染 + 诊断/趋势/会诊三条交互路径 + JS 异常与资源加载 | **46/46** |
+| **无头浏览器**（Playwright + Chromium） | 看板渲染 + 诊断/趋势/会诊三条交互路径 + JS 异常 + 部署一致性 | **48/48** |
 | 单元测试 | 规则引擎 / 仓储 / 事件 | 72 项 |
 
 浏览器层抓出了 API 层测不到的 3 个缺陷（按钮函数名错绑、线上看板旧版、
 java-asset 表名错致 500），均已修复。详见
 [`docs/31_无头浏览器全端全链路测试报告.md`](docs/31_无头浏览器全端全链路测试报告.md)。
 
+**局域网人工测试**：见
+[`docs/32_局域网人工测试操作指南.md`](docs/32_局域网人工测试操作指南.md)
+（访问地址、账号、逐项步骤、预期结果、结果记录表）。
+
 复跑命令：
 
 ```bash
 cd impl
 python tools/local_proxy.py &          # 注入 Host 头与看板凭据
-python tools/browser_e2e.py            # 46 项，输出 JSON + 截图
+python tools/browser_e2e.py            # 48 项，输出 JSON + 截图
 PDM_DB_PASSWORD=*** python tools/e2e_test.py   # 66 项
+
+# 看板部署与一致性校验（ConfigMap 挂载，不经镜像）
+bash tools/deploy_dashboard.sh verify  # 只校验
+bash tools/deploy_dashboard.sh deploy  # 部署并校验
+
+# 方案卡重复清理（默认 dry-run）
+python tools/cleanup_cards.py
+python tools/cleanup_cards.py --apply
 ```
 
 ### 3.8 文档导出（Word / PDF）
