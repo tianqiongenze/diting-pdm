@@ -2,10 +2,21 @@ litestar>=2.13,<3.0
 granian>=2.0,<3.0
 msgspec>=0.18,<1.0
 pydantic>=2.7,<3.0
-numpy>=1.26,<3.0
+# repository.py 直连 TiDB（MySQL 协议）；此前遗漏——0.9.14 及之前
+# 是靠构建环境的全局包连带进入镜像的，0.9.15 纯净构建即 ModuleNotFoundError
+pymysql>=1.1,<2.0
+cryptography>=42.0   # pymysql caching_sha2_password 认证需要
+# numpy<2：numpy 2.x 的 X86_V2 基线（SSE4.2/popcnt）超出集群老节点 CPU 支持，
+# 0.9.15 首次构建即 CrashLoopBackOff（RuntimeError: doesn't support X86_V2）。
+# 0.9.14 及之前实际安装 1.26.4，显式钉住防止 pip 解析到 2.x。
+numpy>=1.26,<2.0
 scipy>=1.13,<2.0
 redis>=5.0,<6.0
 # test
 pytest>=8.0,<9.0
 pytest-asyncio>=0.24,<1.0
 httpx>=0.27,<1.0
+
+# multidict 7.2.0 与 litestar 2.25 的 Headers 构造不兼容（CIMultiDict ABI 变化，
+# debug 时抛 TypeError: ctor requires CIMultiDict），0.9.14 用的是 7.1.0，钉住
+multidict>=7.1,<7.2

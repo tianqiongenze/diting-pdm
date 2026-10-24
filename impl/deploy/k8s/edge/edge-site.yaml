@@ -1,0 +1,286 @@
+# =============================================================================
+# Diting PdM · 边缘站点部署清单（K3s + SQLite）
+#
+# 用途：docs/44 边缘自治站点。每个基地一份，deploy-site.sh 用 sed 替换
+#       __SITE_ID__ / __SITE_NAME__ / __IMAGE__ / __CENTER_URL__ 占位符。
+#
+# 与中心集群（pdm-prod.yaml）的关键差异：
+#   - 数据库：SQLite 文件（/app/data/pdm_edge.db），不跑 TiDB——
+#     TiDB 每副本 2C4G，边缘 K3s 承担不起；SQLite 零运维 + WAL 模式
+#   - 单副本 + 本地存储：边缘是自治闭环，不追求高可用（断网时中心帮不上忙）
+#   - NodePort 暴露看板（边缘通常没有 Ingress Controller）
+#   - 不连 Pulsar（弱网下消息总线不可靠，摘要上行用 HTTP CronJob）
+#   - 判据回退链：本地 site 规则 → 集团 group 规则（repository.hi_rules）
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pdm-edge
+  labels:
+    name: pdm-edge
+    app.kubernetes.io/part-of: diting-pdm
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: pdm-edge-quota
+  namespace: pdm-edge
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 6Gi
+    pods: "12"
+    persistentvolumeclaims: "3"
+---
+# 边缘默认拒绝入站，仅放行同命名空间（CronJob → Service）
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: pdm-edge
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: pdm-edge
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pdm-edge-data
+  namespace: pdm-edge
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi          # SQLite 文件 + WAL，特征数据按窗口清理
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-diagnosis
+  namespace: pdm-edge
+  labels:
+    app: python-diagnosis
+    role: edge
+spec:
+  replicas: 1                # 边缘单副本：自治优先，不做高可用
+  strategy:
+    type: Recreate           # SQLite 是 RWO 卷，滚动更新会双挂载失败
+  selector:
+    matchLabels:
+      app: python-diagnosis
+  template:
+    metadata:
+      labels:
+        app: python-diagnosis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: api
+          image: __IMAGE__   # deploy-site.sh 替换，如 10.167.2.175:30500/pdm/python-diagnosis:0.9.15
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: PDM_ENV
+              value: edge
+            # ---- SQLite 后端（边缘核心差异）----
+            - name: PDM_DB_BACKEND
+              value: sqlite
+            - name: PDM_SQLITE_PATH
+              value: /app/data/pdm_edge.db
+            # ---- 站点身份 ----
+            - name: PDM_EDGE_SITE_ID
+              value: "__SITE_ID__"
+            - name: EDGE_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/version']
+            # ---- 看板 Basic Auth（与中心共用 Secret 名称，值按基地独立）----
+            - name: PDM_DASHBOARD_USER
+              valueFrom:
+                secretKeyRef: {name: pdm-edge-auth, key: username, optional: true}
+            - name: PDM_DASHBOARD_PASS
+              valueFrom:
+                secretKeyRef: {name: pdm-edge-auth, key: password, optional: true}
+            # ---- 业务鉴权 ----
+            - name: PDM_AUTH_REQUIRED
+              value: "1"
+            - name: PDM_AUTH_SECRET
+              valueFrom:
+                secretKeyRef: {name: pdm-edge-auth, key: auth-secret, optional: true}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+            - name: dashboard
+              mountPath: /app/static
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pdm-edge-data
+        - name: tmp
+          emptyDir: {}
+        - name: dashboard
+          configMap:
+            name: pdm-edge-dashboard
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: python-diagnosis
+  namespace: pdm-edge
+spec:
+  type: ClusterIP
+  selector:
+    app: python-diagnosis
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+# 看板 NodePort（边缘无 Ingress Controller 时的唯一入口）
+apiVersion: v1
+kind: Service
+metadata:
+  name: pdm-edge-console
+  namespace: pdm-edge
+spec:
+  type: NodePort
+  selector:
+    app: python-diagnosis
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 32233
+---
+# =============================================================================
+# 边缘运维 CronJob：判据拉取 + 告警同步 + 批量诊断 + 摘要上行
+#
+# 与中心 CronJob（cronjob-ops.yaml）的差异：
+#   1. 多了"摘要上行"（edge_sync.py → 集团 /v1/sites/{id}/summary）
+#   2. 集团不可达时静默降级（exit 0），本地自治不中断
+#   3. 判据版本化：边缘拉集团 scope=group 规则写入本地（hi_rules 回退链生效）
+# =============================================================================
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: edge-sync
+  namespace: pdm-edge
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 1800
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: pdm-edge-ops
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+          containers:
+          - name: sync
+            image: __IMAGE__
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: ["ALL"]
+            env:
+            - name: PDM_DB_BACKEND
+              value: sqlite
+            - name: PDM_SQLITE_PATH
+              value: /app/data/pdm_edge.db
+            - name: PDM_CENTER_URL
+              value: "__CENTER_URL__"   # 如 http://pdm-api.10.167.2.175.nip.io:32231/pdm-api
+            - name: EDGE_VERSION
+              value: "__IMAGE_TAG__"
+            resources:
+              requests: {cpu: 10m, memory: 32Mi}
+              limits: {cpu: 200m, memory: 128Mi}
+            volumeMounts:
+            - name: data
+              mountPath: /app/data
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -u
+              echo "[$(date -Iseconds)] 边缘同步开始"
+              # 1) 本地告警同步 + 批量诊断（自治闭环，失败不阻断上行）
+              curl -fsS --max-time 30 -X POST http://python-diagnosis:8000/v1/alerts/sync \
+                -H "Content-Type: application/json" -H "X-Tenant-Id: __SITE_ID__" \
+                -d '{"threshold_hi":70}' || echo "[warn] 本地告警同步失败"
+              curl -fsS --max-time 120 -X POST http://python-diagnosis:8000/v1/diagnose/batch \
+                -H "Content-Type: application/json" -H "X-Tenant-Id: __SITE_ID__" \
+                -d '{"limit":2000}' || echo "[warn] 本地批量诊断失败"
+              # 2) 摘要上行（集团不可达时 edge_sync.py 自行降级 exit 0）
+              python /app/tools/edge_sync.py \
+                --center "$PDM_CENTER_URL" \
+                --tenant __SITE_ID__ \
+                --name "__SITE_NAME__" || echo "[warn] 摘要上行失败（下轮补报）"
+              echo "[$(date -Iseconds)] 边缘同步结束"
+          volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: pdm-edge-data
+---
+# 看板静态页（与中心同一份源文件，deploy-site.sh 上传）
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pdm-edge-dashboard
+  namespace: pdm-edge
+data:
+  console.html: ""
+  # 由 deploy-site.sh --from-file 生成完整 ConfigMap，此处仅占位声明

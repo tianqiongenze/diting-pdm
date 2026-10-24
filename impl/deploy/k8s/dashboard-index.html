@@ -105,8 +105,18 @@ const BASE = location.pathname.replace(/\/dashboard\/?$/, '') || '';
 const $ = id => document.getElementById(id);
 const log = (m) => { $('log').textContent += m + '\n'; $('log').scrollTop = 1e9; };
 
+// 租户参数化（docs/43 P0-5）：从 URL query ?tenant=xxx 读取，去除硬编码 site-a。
+// 多基地部署时，每个基地用不同 URL（/dashboard?tenant=site-b）即可，无需改文件。
+let DEFAULT_TENANT = 'site-a';
+function initTenant() {
+  const params = new URLSearchParams(location.search);
+  const t = params.get('tenant');
+  if (t) { DEFAULT_TENANT = t; $('tenant').value = t; }
+}
+initTenant();
+
 function hdr(extra={}) {
-  return Object.assign({'Content-Type':'application/json', 'X-Tenant-Id': $('tenant').value || 'site-a'}, extra);
+  return Object.assign({'Content-Type':'application/json', 'X-Tenant-Id': $('tenant').value || DEFAULT_TENANT}, extra);
 }
 async function api(path, opts={}) {
   const r = await fetch(BASE + path, Object.assign({headers: hdr()}, opts));

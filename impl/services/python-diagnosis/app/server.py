@@ -617,13 +617,104 @@ async def create_case_endpoint(request: Request) -> dict[str, Any]:
 
 # ---------- 告警规则 ----------
 @get("/v1/rules")
-async def list_rules_endpoint(request: Request) -> dict[str, Any]:
-    """告警规则列表（阈值可配置）。"""
+async def list_rules_endpoint(request: Request, rule_scope: str = "site",
+                              version: int | None = None) -> dict[str, Any]:
+    """告警规则列表（阈值可配置）。rule_scope=group|site，version=None 取最新。
+
+    注意：参数名不能用 `scope`——Litestar 2.25 会把它当作保留名跳过
+    （OpenAPI 里只出现 version，运行时 scope 收到 None 触发 400）。
+    """
     tenant = request.headers.get("X-Tenant-Id")
     if not tenant:
         raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
-    rows = await asyncio.to_thread(repository.list_alert_rules, tenant)
-    return {"tenant_id": tenant, "count": len(rows), "items": rows}
+    if rule_scope not in ("group", "site"):
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="rule_scope must be group|site")
+    rows = await asyncio.to_thread(repository.list_alert_rules, tenant, rule_scope, version)
+    return {"tenant_id": tenant, "scope": rule_scope, "version": version,
+            "count": len(rows), "items": rows}
+
+
+@post("/v1/rules/group/publish", status_code=200)
+async def publish_group_rule_endpoint(request: Request) -> dict[str, Any]:
+    """集团发布新判据（version 自动递增，基地 24h 内生效）。需 plan.approve 权限。FR-904。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        auth_mod.require(request.headers.get("X-Auth-Token"), "plan.approve")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    try:
+        return await asyncio.to_thread(repository.publish_group_rules, tenant, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@get("/v1/stats/fleet")
+async def fleet_stats_endpoint() -> dict[str, Any]:
+    """集团对标统计：跨基地设备数/覆盖率/红橙比/平均 HI。FR-905。"""
+    data = await asyncio.to_thread(repository.fleet_stats)
+    return {**data}
+
+
+# ---------- 集团站点注册与边缘上行（docs/44 §3） ----------
+@post("/v1/sites/register", status_code=200)
+async def site_register_endpoint(request: Request) -> dict[str, Any]:
+    """边缘站点注册/心跳（幂等）。边缘启动与每次上行同步时调用。
+
+    无需业务登录（机器账号场景），但要求 X-Tenant-Id 且写操作走 Secret
+    注入的机器凭据由边缘侧自行保管；此处仅记录注册信息，不读业务数据。
+    """
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    return await asyncio.to_thread(
+        repository.register_site, tenant,
+        str(payload.get("name") or tenant),
+        str(payload.get("region") or "CN"),
+        int(payload.get("device_count") or 0),
+        str(payload.get("edge_version") or ""))
+
+
+@get("/v1/sites")
+async def list_sites_endpoint(request: Request) -> dict[str, Any]:
+    """站点清单（含在线状态）。需 user.view 权限。"""
+    try:
+        auth_mod.require(request.headers.get("X-Auth-Token"), "user.view")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    rows = await asyncio.to_thread(repository.list_sites)
+    return {"count": len(rows), "sites": rows}
+
+
+@post("/v1/sites/{site_id:str}/summary", status_code=200)
+async def site_summary_endpoint(request: Request, site_id: str) -> dict[str, Any]:
+    """边缘上行健康摘要（覆盖式更新）。只收聚合指标，不收单台数据。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    if tenant != site_id:
+        raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="site mismatch")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    return await asyncio.to_thread(repository.upsert_edge_summary, site_id, payload)
+
+
+@get("/v1/sites/summaries")
+async def site_summaries_endpoint(request: Request) -> dict[str, Any]:
+    """各边缘站点最新摘要（集团对标大屏数据源）。"""
+    rows = await asyncio.to_thread(repository.list_edge_summaries)
+    return {"count": len(rows), "sites": rows}
 
 
 @put("/v1/rules/{rule_id:str}")
@@ -641,6 +732,7 @@ async def upsert_rule_endpoint(request: Request, rule_id: str) -> dict[str, Any]
     except Exception:  # noqa: BLE001
         payload = {}
     payload["rule_id"] = rule_id
+    payload.setdefault("scope", "site")
     try:
         return await asyncio.to_thread(repository.upsert_alert_rule, tenant, payload)
     except ValueError as exc:
@@ -954,7 +1046,10 @@ app = Litestar(
                    append_worklog_endpoint, list_worklogs_endpoint,
                    list_spares_endpoint, move_spare_endpoint, list_spare_issues_endpoint,
                    list_cases_endpoint, create_case_endpoint,
-                   list_rules_endpoint, upsert_rule_endpoint],
+                   list_rules_endpoint, upsert_rule_endpoint,
+                   publish_group_rule_endpoint, fleet_stats_endpoint,
+                   site_register_endpoint, list_sites_endpoint,
+                   site_summary_endpoint, site_summaries_endpoint],
     on_startup=[_on_startup],
     debug=os.getenv("PDM_ENV", "prod") != "prod",
 )

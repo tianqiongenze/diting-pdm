@@ -1,8 +1,13 @@
-# 运维自动化 CronJob：告警同步 + RUL 重算
+# 运维自动化 CronJob：告警同步 + RUL 重算 + 批量诊断
 #
-# 背景（技术债 #1、#3）：
+# 背景（技术债 #1、#3，docs/43 P0-1）：
 #   1. 告警原先靠人在页面点「同步告警」按钮，容易漏；本 CronJob 每 10 分钟自动同步。
 #   2. RUL 需按最新健康历史重算，每小时刷新一次并写回 read_asset_health。
+#   3. 批量诊断每 15 分钟刷新读模型，覆盖全部在监设备。
+#
+# 多租户参数化（docs/43 P0-1）：
+#   此前 3 个 CronJob 硬编码 X-Tenant-Id: site-a，接第 2 个基地时要改 YAML 重部署。
+#   现在改为 $TENANT 环境变量 + $TENANTS 多租户循环，一个脚本部署全部基地。
 #
 # 设计要点：
 #   - 直接打集群内 Service（python-diagnosis:8000），不经 Ingress，无需 Basic Auth
@@ -50,6 +55,11 @@ spec:
               readOnlyRootFilesystem: true
               capabilities:
                 drop: ["ALL"]
+            env:
+            - name: TENANTS
+              value: "site-a"          # 多基地：逗号分隔 "site-a,site-b,site-c"
+            - name: THRESHOLD_HI
+              value: "70"
             resources:
               requests:
                 cpu: 10m
@@ -62,14 +72,15 @@ spec:
             - -c
             - |
               set -eu
-              echo "[$(date -Iseconds)] 开始同步告警"
-              curl -fsS --max-time 60 --retry 2 --retry-delay 3 \
-                -X POST http://python-diagnosis:8000/v1/alerts/sync \
-                -H "Content-Type: application/json" \
-                -H "X-Tenant-Id: site-a" \
-                -d '{"threshold_hi":70}'
-              echo
-              echo "[$(date -Iseconds)] 同步完成"
+              for T in $TENANTS; do
+                echo "[$(date -Iseconds)] [${T}] 开始同步告警"
+                curl -fsS --max-time 60 --retry 2 --retry-delay 3 \
+                  -X POST http://python-diagnosis:8000/v1/alerts/sync \
+                  -H "Content-Type: application/json" \
+                  -H "X-Tenant-Id: $T" \
+                  -d "{\"threshold_hi\":${THRESHOLD_HI}}"
+                echo "[$(date -Iseconds)] [${T}] 同步完成"
+              done
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -110,6 +121,11 @@ spec:
               readOnlyRootFilesystem: true
               capabilities:
                 drop: ["ALL"]
+            env:
+            - name: TENANTS
+              value: "site-a"
+            - name: CRITICAL_HI
+              value: "40"
             resources:
               requests:
                 cpu: 10m
@@ -122,14 +138,15 @@ spec:
             - -c
             - |
               set -eu
-              echo "[$(date -Iseconds)] 开始重算 RUL"
-              curl -fsS --max-time 120 --retry 2 --retry-delay 3 \
-                -X POST http://python-diagnosis:8000/v1/rul/refresh \
-                -H "Content-Type: application/json" \
-                -H "X-Tenant-Id: site-a" \
-                -d '{"critical_hi":40}'
-              echo
-              echo "[$(date -Iseconds)] RUL 刷新完成"
+              for T in $TENANTS; do
+                echo "[$(date -Iseconds)] [${T}] 开始重算 RUL"
+                curl -fsS --max-time 120 --retry 2 --retry-delay 3 \
+                  -X POST http://python-diagnosis:8000/v1/rul/refresh \
+                  -H "Content-Type: application/json" \
+                  -H "X-Tenant-Id: $T" \
+                  -d "{\"critical_hi\":${CRITICAL_HI}}"
+                echo "[$(date -Iseconds)] [${T}] RUL 刷新完成"
+              done
 ---
 # 批量诊断 CronJob
 #
@@ -140,6 +157,8 @@ spec:
 #
 # 鉴权：/v1/diagnose/batch 需 plan.edit 权限，故先用机器账号登录取 token。
 # 机器账号凭据来自 Secret（batch-user / batch-pass），不硬编码在 YAML 里。
+#
+# 多租户参数化（docs/43 P0-1）：TENANTS 环境变量支持逗号分隔多租户循环。
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -181,6 +200,8 @@ spec:
               capabilities:
                 drop: ["ALL"]
             env:
+            - name: TENANTS
+              value: "site-a"       # 多基地：逗号分隔
             - name: BATCH_USER
               valueFrom:
                 secretKeyRef:
@@ -203,21 +224,23 @@ spec:
             - -c
             - |
               set -eu
-              echo "[$(date -Iseconds)] 开始批量诊断"
-              # 1) 登录取 token（curl 镜像无 jq，用 grep 截取）
-              TOKEN=$(curl -fsS --max-time 20 \
-                -X POST http://python-diagnosis:8000/v1/auth/login \
-                -H "Content-Type: application/json" \
-                -d "{\"username\":\"$BATCH_USER\",\"password\":\"$BATCH_PASS\"}" \
-                | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
-              if [ -z "$TOKEN" ]; then echo "登录失败"; exit 1; fi
-              echo "已取得 token（长度 ${#TOKEN}）"
-              # 2) 全量诊断
-              curl -fsS --max-time 600 \
-                -X POST http://python-diagnosis:8000/v1/diagnose/batch \
-                -H "Content-Type: application/json" \
-                -H "X-Tenant-Id: site-a" \
-                -H "X-Auth-Token: $TOKEN" \
-                -d '{"limit":5000}'
-              echo
-              echo "[$(date -Iseconds)] 批量诊断完成"
+              for T in $TENANTS; do
+                echo "[$(date -Iseconds)] [${T}] 开始批量诊断"
+                # 1) 登录取 token（curl 镜像无 jq，用 grep 截取）
+                TOKEN=$(curl -fsS --max-time 20 \
+                  -X POST http://python-diagnosis:8000/v1/auth/login \
+                  -H "Content-Type: application/json" \
+                  -H "X-Tenant-Id: $T" \
+                  -d "{\"username\":\"$BATCH_USER\",\"password\":\"$BATCH_PASS\"}" \
+                  | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                if [ -z "$TOKEN" ]; then echo "[${T}] 登录失败"; exit 1; fi
+                echo "[${T}] 已取得 token（长度 ${#TOKEN}）"
+                # 2) 全量诊断
+                curl -fsS --max-time 600 \
+                  -X POST http://python-diagnosis:8000/v1/diagnose/batch \
+                  -H "Content-Type: application/json" \
+                  -H "X-Tenant-Id: $T" \
+                  -H "X-Auth-Token: $TOKEN" \
+                  -d '{"limit":5000}'
+                echo "[$(date -Iseconds)] [${T}] 批量诊断完成"
+              done

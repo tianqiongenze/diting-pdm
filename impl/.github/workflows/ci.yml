@@ -47,11 +47,16 @@ jobs:
           curl -sSL https://github.com/bufbuild/buf/releases/latest/download/buf-Linux-x86_64 \
             -o /usr/local/bin/buf && chmod +x /usr/local/bin/buf
       - name: Lint proto
-        run: buf lint contracts/proto || true
+        run: buf lint contracts/proto
       - name: Breaking change check
         run: |
-          echo "首次提交无基线，跳过；后续需对 main 做 buf breaking"
-          buf breaking contracts/proto --against '.git#branch=main' || echo "no baseline yet"
+          # 首次提交无基线时 buf breaking 会报错（无 git ref），用 git rev-parse 判断
+          BASE_REF=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null || echo "")
+          if [ -n "$BASE_REF" ]; then
+            buf breaking contracts/proto --against "$BASE_REF"
+          else
+            echo "无基线，首次提交跳过 breaking 检查"
+          fi
 
   security:
     runs-on: ubuntu-latest

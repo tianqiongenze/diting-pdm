@@ -1,22 +1,36 @@
-"""数据访问层（TiDB）。
+"""数据访问层（TiDB / SQLite 双后端）。
 
 两条硬规则（docs/17 §8.2、impl/db/tidb/TENANT_ISOLATION.md）：
 1. 所有查询必须经 TenantQueryBuilder，禁止裸 SQL
 2. 返回结果逐行断言 tenant_id，不一致即抛 CrossTenantLeak
 
-连接策略：短连接 + 线程内复用。TiDB 的连接建立成本低（毫秒级），
-比维护连接池更简单可靠；高频场景再引入池化。
+连接策略：
+- TiDB（mysql 后端，集团中心默认）：短连接 + 线程内复用。TiDB 的连接建立
+  成本低（毫秒级），比维护连接池更简单可靠；高频场景再引入池化。
+- SQLite（sqlite 后端，边缘默认）：文件库 + WAL，零运维，适配单节点 K3s
+  边缘自治场景（docs/44 §3）。方言差异由 _translate() 统一转换，
+  上层仓库函数零改动。
+
+后端选择：PDM_BACKEND=sqlite 时走 SQLite，否则默认 mysql。
 """
 
 from __future__ import annotations
 
 import os
+import re
+import sqlite3
 from contextlib import contextmanager
 from typing import Any, Iterator
 import datetime
 
 import pymysql
 from pymysql.cursors import DictCursor
+
+# ---------------------------------------------------------------------------
+# 后端选择（docs/44：集团中心 TiDB，边缘 K3s SQLite）
+# ---------------------------------------------------------------------------
+DB_BACKEND = os.getenv("PDM_DB_BACKEND", "mysql").strip().lower()
+SQLITE_PATH = os.getenv("PDM_SQLITE_PATH", "/app/data/pdm_edge.db")
 
 DB_CONFIG = dict(
     host=os.getenv("PDM_TIDB_HOST", "tidb.infra.svc.cluster.local"),
@@ -37,8 +51,206 @@ class CrossTenantLeak(RuntimeError):
     """检测到跨租户数据，属于安全事件，必须告警。"""
 
 
+# ---------------------------------------------------------------------------
+# SQLite 方言适配层（对调用方完全透明）
+# ---------------------------------------------------------------------------
+
+# MySQL UPSERT 的冲突目标（SQLite ON CONFLICT 需要显式主键）
+_UPSERT_PK: dict[str, tuple[str, ...]] = {
+    "read_asset_health": ("tenant_id", "asset_id"),
+    "read_asset_latest": ("tenant_id", "asset_id"),
+    "alert_rule": ("tenant_id", "rule_id", "version"),
+    "site_registry": ("site_id",),
+    "read_edge_summary": ("site_id",),
+}
+
+_DT_CONVERTERS = {"DATETIME", "DATE", "TIMESTAMP"}
+
+
+def _parse_dt(value: bytes) -> datetime.datetime:
+    """SQLite TEXT → datetime（与 pymysql 返回类型对齐）。
+
+    上层代码（如 list_plans 的 days_left 计算）依赖 isinstance(due, datetime)，
+    所以读回来的时间列必须还原为 datetime 对象，不能停留在字符串。
+    """
+    text = value.decode() if isinstance(value, bytes) else str(value)
+    text = text.replace("T", " ").split(".")[0].split("+")[0].strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return datetime.datetime.fromisoformat(text)
+
+
+for _name in _DT_CONVERTERS:
+    sqlite3.register_converter(_name, _parse_dt)
+
+
+def _adapt_param(v: Any) -> Any:
+    """MySQL 驱动接受的参数 → sqlite3 驱动接受的参数。"""
+    if isinstance(v, datetime.datetime):
+        return v.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(v, datetime.date):
+        return v.strftime("%Y-%m-%d")
+    if isinstance(v, decimal_type()):
+        return float(v)
+    return v
+
+
+def decimal_type():
+    import decimal
+    return decimal.Decimal
+
+
+def _translate(sql: str, params: Any) -> tuple[str, tuple[Any, ...]]:
+    """MySQL 方言 → SQLite 方言。
+
+    覆盖 5 类差异：
+    1. 占位符 %s → ?
+    2. INSERT IGNORE INTO → INSERT OR IGNORE INTO
+    3. ON DUPLICATE KEY UPDATE x=VALUES(x) → ON CONFLICT(pk) DO UPDATE SET x=excluded.x
+    4. NOW() / NOW() - INTERVAL 1 HOUR → datetime('now') / datetime('now','-1 hour')
+    5. 反引号标识符 → 双引号
+    """
+    # 4. NOW() 表达式（先替换复合形式，避免被简单形式截胡）
+    sql = re.sub(r"NOW\s*\(\s*\)\s*-\s*INTERVAL\s+1\s+HOUR",
+                 "datetime('now','-1 hour')", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"NOW\s*\(\s*\)", "datetime('now')", sql, flags=re.IGNORECASE)
+    # 4b. TIMESTAMPADD(HOUR, n, col) → datetime(col, '+n hours')（SQLite 无此函数）
+    sql = re.sub(
+        r"TIMESTAMPADD\s*\(\s*HOUR\s*,\s*(\w+)\s*,\s*([\w.]+)\s*\)",
+        r"datetime(\2, '+' || \1 || ' hours')", sql, flags=re.IGNORECASE)
+    # 5. 反引号 → 双引号（SQLite 标准标识符引用）
+    sql = sql.replace("`", '"')
+    # 2. INSERT IGNORE
+    sql = re.sub(r"INSERT\s+IGNORE\s+INTO", "INSERT OR IGNORE INTO",
+                 sql, flags=re.IGNORECASE)
+    # 3. ON DUPLICATE KEY UPDATE → ON CONFLICT
+    m = re.search(r"ON\s+DUPLICATE\s+KEY\s+UPDATE\s+(.+)$",
+                  sql, flags=re.IGNORECASE | re.DOTALL)
+    if m:
+        tm = re.search(r"INSERT\s+INTO\s+(\w+)", sql, flags=re.IGNORECASE)
+        table = tm.group(1) if tm else ""
+        pk = _UPSERT_PK.get(table)
+        if not pk:
+            raise RuntimeError(
+                f"sqlite upsert 缺少表 {table!r} 的主键映射，请在 _UPSERT_PK 登记")
+        assigns = []
+        for part in m.group(1).split(","):
+            col = part.split("=", 1)[0].strip()
+            assigns.append(f"{col}=excluded.{col}")
+        sql = (sql[:m.start()]
+               + f"ON CONFLICT({', '.join(pk)}) DO UPDATE SET "
+               + ", ".join(assigns))
+    # 1. 占位符
+    sql = sql.replace("%s", "?")
+    if params is None:
+        params = ()
+    elif not isinstance(params, (tuple, list)):
+        params = (params,)
+    params = tuple(_adapt_param(p) for p in params)
+    return sql, params
+
+
+class _CompatCursor:
+    """包裹 sqlite3.Cursor：方言转换 + 行转 dict，对调用方透明。
+
+    必须实现上下文管理协议——仓库代码统一写成
+    `with connect() as conn, conn.cursor() as cur:`。
+    """
+
+    def __init__(self, cur: sqlite3.Cursor) -> None:
+        self._cur = cur
+
+    def execute(self, sql: str, params: Any = None) -> "_CompatCursor":
+        sql, params = _translate(sql, params)
+        self._cur.execute(sql, params)
+        return self
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        rows = self._cur.fetchall()
+        cols = [d[0] for d in self._cur.description or []]
+        return [dict(zip(cols, r)) for r in rows]
+
+    def fetchone(self) -> dict[str, Any] | None:
+        r = self._cur.fetchone()
+        if r is None:
+            return None
+        cols = [d[0] for d in self._cur.description or []]
+        return dict(zip(cols, r))
+
+    @property
+    def rowcount(self) -> int:
+        return self._cur.rowcount
+
+    @property
+    def lastrowid(self) -> int:
+        return self._cur.lastrowid
+
+    def __enter__(self) -> "_CompatCursor":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cur, name)
+
+
+class _SQLiteConn:
+    """包裹 sqlite3.Connection：cursor() 返回适配游标。
+
+    isolation_level=None = 真 autocommit，与 pymysql autocommit=True 语义
+    完全一致：每条语句立即提交。仓库层的写路径全部依赖这一点（它们从不
+    显式调 commit），若用 sqlite3 默认的隐式事务，连接关闭时未提交的
+    写入会被静默回滚——所有 INSERT/UPDATE 都会丢数据。
+    commit()/rollback() 保留为空操作：pulsar_consumer 等调用方会显式
+    调 commit()（pymysql autocommit 下的无害调用），SQLite 下同样是
+    无害调用，保持接口兼容。
+    """
+
+    def __init__(self, path: str) -> None:
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        # detect_types=PARSE_DECLTYPES：按 DDL 声明的 DATETIME 类型还原为
+        # datetime 对象，与 pymysql 行为对齐（上层依赖 isinstance 判断）
+        self._conn = sqlite3.connect(
+            path, timeout=10, isolation_level=None,
+            detect_types=sqlite3.PARSE_DECLTYPES)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=10000")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+
+    def cursor(self) -> _CompatCursor:
+        return _CompatCursor(self._conn.cursor())
+
+    def commit(self) -> None:
+        return None
+
+    def rollback(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> "_SQLiteConn":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
+
+
 @contextmanager
-def connect() -> Iterator[pymysql.connections.Connection]:
+def connect() -> Iterator[Any]:
+    if DB_BACKEND == "sqlite":
+        conn = _SQLiteConn(SQLITE_PATH)
+        try:
+            yield conn
+        finally:
+            conn.close()
+        return
     conn = pymysql.connect(**DB_CONFIG)
     try:
         yield conn
@@ -859,14 +1071,16 @@ def system_stats(tenant_id: str) -> dict[str, Any]:
     out = []
     with connect() as conn, conn.cursor() as cur:
         est: dict[str, int] = {}
-        try:
-            cur.execute(
-                "SELECT table_name AS tn, table_rows AS tr FROM information_schema.tables "
-                "WHERE table_schema='pdm'")
-            for r in cur.fetchall():
-                est[str(r["tn"])] = int(r["tr"] or 0)
-        except Exception:  # noqa: BLE001
-            est = {}
+        # SQLite 无 information_schema；边缘库规模小，全部精确 COUNT
+        if DB_BACKEND != "sqlite":
+            try:
+                cur.execute(
+                    "SELECT table_name AS tn, table_rows AS tr FROM information_schema.tables "
+                    "WHERE table_schema='pdm'")
+                for r in cur.fetchall():
+                    est[str(r["tn"])] = int(r["tr"] or 0)
+            except Exception:  # noqa: BLE001
+                est = {}
 
         for t in tables:
             guess = est.get(t)
@@ -1307,6 +1521,56 @@ def overview_stats(tenant_id: str) -> dict[str, Any]:
     }
 
 
+def fleet_stats() -> dict[str, Any]:
+    """集团对标统计：跨租户汇总各基地设备数/覆盖率/红橙比/平均 HI。
+
+    不按 tenant_id 过滤——这是集团级视角，需遍历所有租户。
+    走 TenantQueryBuilder 之外的直连，因为这是跨租户聚合，
+    且返回的是汇总数字（不含单台设备数据），无数据泄漏风险。
+
+    FR-905 跨基地对标看板的数据来源。
+    """
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT a.tenant_id, "
+            "  COUNT(DISTINCT a.asset_id) AS total_assets, "
+            "  COUNT(DISTINCT h.asset_id) AS assessed, "
+            "  SUM(CASE WHEN h.level='red' THEN 1 ELSE 0 END) AS red, "
+            "  SUM(CASE WHEN h.level='orange' THEN 1 ELSE 0 END) AS orange, "
+            "  SUM(CASE WHEN h.level='yellow' THEN 1 ELSE 0 END) AS yellow, "
+            "  SUM(CASE WHEN h.level='green' THEN 1 ELSE 0 END) AS green, "
+            "  AVG(h.hi) AS avg_hi "
+            "FROM asset a "
+            "LEFT JOIN read_asset_health h ON h.tenant_id=a.tenant_id AND h.asset_id=a.asset_id "
+            "GROUP BY a.tenant_id ORDER BY a.tenant_id"
+        )
+        sites = []
+        for r in cur.fetchall():
+            total = int(r["total_assets"] or 0)
+            assessed = int(r["assessed"] or 0)
+            avg_hi_val = r["avg_hi"]
+            sites.append({
+                "tenant_id": r["tenant_id"],
+                "total_assets": total,
+                "assessed": assessed,
+                "coverage_pct": round(100 * assessed / total, 1) if total else 0.0,
+                "by_level": {
+                    "red": int(r["red"] or 0),
+                    "orange": int(r["orange"] or 0),
+                    "yellow": int(r["yellow"] or 0),
+                    "green": int(r["green"] or 0),
+                },
+                "avg_hi": round(float(avg_hi_val), 1) if avg_hi_val is not None else None,
+            })
+        cur.execute("SELECT COUNT(*) AS n, COUNT(DISTINCT tenant_id) AS tenants FROM asset")
+        total_row = cur.fetchone()
+    return {
+        "tenants": len(sites),
+        "total_assets": int(total_row["n"] or 0),
+        "sites": sites,
+    }
+
+
 def decimal_module():
     import decimal
     return decimal
@@ -1446,16 +1710,34 @@ _OPS = {"lt": lambda a, b: a < b, "lte": lambda a, b: a <= b,
         "gt": lambda a, b: a > b, "gte": lambda a, b: a >= b}
 
 
-def list_alert_rules(tenant_id: str) -> list[dict[str, Any]]:
-    rows = list(
-        TenantQueryBuilder(tenant_id)
-        .query("SELECT rule_id,name,metric,op,threshold,level,owner_role,sla_hours,enabled,note "
-               "FROM alert_rule WHERE tenant_id=%s ORDER BY rule_id")
-        .fetchall()
-    )
+def list_alert_rules(tenant_id: str, scope: str = "site", version: int | None = None) -> list[dict[str, Any]]:
+    """告警规则列表。
+
+    scope='group' 取集团发布的判据（全集团唯一真相源，FR-903）；
+    scope='site'  取基地本地判据（海外弱网自治时可用）。
+    version=None 取最新版本，否则取指定版本。
+
+    判据版本化（docs/43 P0-3）：集团发布新判据时 version 递增，
+    基地 24 小时内生效（FR-904）。
+    """
+    if version is None:
+        # 子查询取每个 rule_id 的最大 version
+        sql = ("SELECT rule_id,name,metric,op,threshold,level,owner_role,sla_hours,enabled,note,version,scope "
+               "FROM alert_rule WHERE tenant_id=%s AND scope=%s "
+               "AND version = (SELECT MAX(version) FROM alert_rule WHERE tenant_id=%s AND scope=%s AND rule_id=alert_rule.rule_id) "
+               "ORDER BY rule_id")
+        rows = list(TenantQueryBuilder(tenant_id).query(sql, scope, tenant_id, scope).fetchall())
+    else:
+        rows = list(TenantQueryBuilder(tenant_id)
+                    .query("SELECT rule_id,name,metric,op,threshold,level,owner_role,sla_hours,enabled,note,version,scope "
+                           "FROM alert_rule WHERE tenant_id=%s AND scope=%s AND version=%s ORDER BY rule_id",
+                           scope, version)
+                    .fetchall())
     for r in rows:
         if isinstance(r.get("threshold"), decimal_module().Decimal):
             r["threshold"] = float(r["threshold"])
+        if isinstance(r.get("enabled"), int):
+            r["enabled"] = bool(r["enabled"])
     return rows
 
 
@@ -1471,24 +1753,170 @@ def upsert_alert_rule(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]
     level = str(payload.get("level") or "orange")
     sla = int(payload.get("sla_hours") or 24)
     enabled = 1 if payload.get("enabled", True) else 0
+    scope = str(payload.get("scope") or "site")
+    if scope not in ("group", "site"):
+        raise ValueError(f"invalid scope: {scope}")
+    version = int(payload.get("version") or 1)
     with connect() as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO alert_rule(tenant_id,rule_id,name,metric,op,threshold,level,owner_role,"
-            "sla_hours,enabled,note,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "sla_hours,enabled,note,version,scope,created_at,updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "ON DUPLICATE KEY UPDATE name=VALUES(name),metric=VALUES(metric),op=VALUES(op),"
             "threshold=VALUES(threshold),level=VALUES(level),sla_hours=VALUES(sla_hours),"
-            "enabled=VALUES(enabled),note=VALUES(note)",
+            "enabled=VALUES(enabled),note=VALUES(note),updated_at=VALUES(updated_at)",
             (tenant_id, rid, str(payload.get("name") or rid), metric, op, threshold, level,
              str(payload.get("owner_role") or "maintenance_supervisor"), sla, enabled,
-             payload.get("note"), datetime.datetime.now()),
+             payload.get("note"), version, scope, datetime.datetime.now(), datetime.datetime.now()),
         )
     return {"rule_id": rid, "metric": metric, "op": op, "threshold": threshold,
-            "level": level, "sla_hours": sla, "enabled": bool(enabled)}
+            "level": level, "sla_hours": sla, "enabled": bool(enabled),
+            "version": version, "scope": scope}
 
 
-def hi_rules(tenant_id: str) -> list[dict[str, Any]]:
-    """取启用的 HI 类规则，按阈值降序（先匹配最严的）。"""
-    rules = [r for r in list_alert_rules(tenant_id)
+def publish_group_rules(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """集团发布新判据：version 递增，基地 24h 内生效（FR-904）。
+
+    与 upsert_alert_rule 的区别：
+    - scope 固定为 'group'
+    - version 自动递增（取当前最大 version + 1）
+    - 仅 manager 角色可调用（server 层鉴权）
+    """
+    rid = str(payload.get("rule_id") or "").strip()
+    if not rid:
+        raise ValueError("rule_id required")
+    op = str(payload.get("op") or "lt")
+    if op not in _OPS:
+        raise ValueError(f"invalid op: {op}")
+    metric = str(payload.get("metric") or "hi")
+    threshold = float(payload.get("threshold"))
+    level = str(payload.get("level") or "orange")
+    sla = int(payload.get("sla_hours") or 24)
+    enabled = 1 if payload.get("enabled", True) else 0
+    with connect() as conn, conn.cursor() as cur:
+        # 取当前最大 version + 1
+        cur.execute("SELECT MAX(version) AS v FROM alert_rule WHERE tenant_id=%s AND scope='group' AND rule_id=%s",
+                    (tenant_id, rid))
+        row = cur.fetchone()
+        new_version = (int(row["v"]) + 1) if row and row["v"] else 1
+        # ON DUPLICATE KEY：PK 是 (tenant, rule, version)——若首发布时已存在
+        # 同 PK 的 site 行（迁移场景），覆盖为 group 判据而不是报 1062
+        cur.execute(
+            "INSERT INTO alert_rule(tenant_id,rule_id,name,metric,op,threshold,level,owner_role,"
+            "sla_hours,enabled,note,version,scope,created_at,updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE name=VALUES(name),metric=VALUES(metric),op=VALUES(op),"
+            "threshold=VALUES(threshold),level=VALUES(level),sla_hours=VALUES(sla_hours),"
+            "enabled=VALUES(enabled),note=VALUES(note),scope='group',updated_at=VALUES(updated_at)",
+            (tenant_id, rid, str(payload.get("name") or rid), metric, op, threshold, level,
+             str(payload.get("owner_role") or "maintenance_supervisor"), sla, enabled,
+             payload.get("note"), new_version, "group", datetime.datetime.now(), datetime.datetime.now()),
+        )
+    return {"rule_id": rid, "metric": metric, "op": op, "threshold": threshold,
+            "level": level, "sla_hours": sla, "enabled": bool(enabled),
+            "version": new_version, "scope": "group"}
+
+
+def hi_rules(tenant_id: str, scope: str = "site") -> list[dict[str, Any]]:
+    """取启用的 HI 类规则，按阈值降序。
+
+    默认取基地本地判据；若基地无本地判据，回退到集团判据（FR-903 统一判据）。
+    """
+    rules = [r for r in list_alert_rules(tenant_id, scope=scope)
              if r["metric"] == "hi" and r["enabled"]]
+    if not rules and scope == "site":
+        # 回退到集团判据
+        rules = [r for r in list_alert_rules(tenant_id, scope="group")
+                 if r["metric"] == "hi" and r["enabled"]]
     rules.sort(key=lambda r: float(r["threshold"]), reverse=True)
     return rules
+
+
+# ---------------------------------------------------------------------------
+# 集团站点注册与边缘上行（docs/44 §3 边缘自治 + 摘要上行）
+# ---------------------------------------------------------------------------
+def register_site(site_id: str, name: str, region: str = "CN",
+                  device_count: int = 0, edge_version: str = "",
+                  **extra: Any) -> dict[str, Any]:
+    """边缘站点注册/心跳（幂等 upsert）。
+
+    边缘启动时和每次上行同步时调用：存在即更新心跳与统计，不存在即注册。
+    判定依据：heartbeat 距今 < 3×上报间隔（默认 10 分钟）视为在线。
+    """
+    now = datetime.datetime.now()
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO site_registry(site_id,site_name,region,device_count,"
+            "edge_version,heartbeat,status) VALUES (%s,%s,%s,%s,%s,%s,'ACTIVE') "
+            "ON DUPLICATE KEY UPDATE site_name=VALUES(site_name),region=VALUES(region),"
+            "device_count=VALUES(device_count),edge_version=VALUES(edge_version),"
+            "heartbeat=VALUES(heartbeat),status='ACTIVE'",
+            (site_id, name, region, int(device_count), edge_version, now),
+        )
+    return {"site_id": site_id, "status": "ACTIVE", "heartbeat": now.isoformat(timespec="seconds")}
+
+
+def list_sites(online_window_minutes: int = 30) -> list[dict[str, Any]]:
+    """集团视角的站点清单，附在线状态（heartbeat 超窗即 OFFLINE）。"""
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT site_id, site_name, region, device_count, edge_version, "
+                    "heartbeat, status, created_at FROM site_registry ORDER BY site_id")
+        rows = list(cur.fetchall())
+    now = datetime.datetime.now()
+    out = []
+    for r in rows:
+        hb = r.get("heartbeat")
+        online = (isinstance(hb, datetime.datetime)
+                  and (now - hb).total_seconds() < online_window_minutes * 60)
+        r["online"] = online
+        if isinstance(hb, datetime.datetime):
+            r["last_seen_min_ago"] = round((now - hb).total_seconds() / 60, 1)
+        out.append(r)
+    return out
+
+
+def upsert_edge_summary(site_id: str, summary: dict[str, Any]) -> dict[str, Any]:
+    """边缘上行摘要落库（read_edge_summary，每站点 1 行，覆盖式更新）。
+
+    摘要只含聚合指标（设备数/覆盖率/四级分布/平均 HI/告警统计），
+    不含单台设备数据——数据主权分级 L4（docs/44 §6.1）。
+    """
+    import json
+    now = datetime.datetime.now()
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO read_edge_summary(site_id,total_assets,assessed,coverage_pct,"
+            "by_level,avg_hi,open_alerts,summary_json,reported_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE total_assets=VALUES(total_assets),"
+            "assessed=VALUES(assessed),coverage_pct=VALUES(coverage_pct),"
+            "by_level=VALUES(by_level),avg_hi=VALUES(avg_hi),"
+            "open_alerts=VALUES(open_alerts),summary_json=VALUES(summary_json),"
+            "reported_at=VALUES(reported_at)",
+            (site_id,
+             int(summary.get("total_assets") or 0),
+             int(summary.get("assessed") or 0),
+             float(summary.get("coverage_pct") or 0.0),
+             json.dumps(summary.get("by_level") or {}, ensure_ascii=False),
+             summary.get("avg_hi"),
+             int(summary.get("open_alerts") or 0),
+             json.dumps(summary, ensure_ascii=False),
+             now),
+        )
+    return {"site_id": site_id, "reported_at": now.isoformat(timespec="seconds")}
+
+
+def list_edge_summaries() -> list[dict[str, Any]]:
+    """各边缘站点最新摘要（集团对标大屏数据源之一）。"""
+    import json
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT site_id, total_assets, assessed, coverage_pct, by_level, "
+                    "avg_hi, open_alerts, reported_at FROM read_edge_summary ORDER BY site_id")
+        rows = list(cur.fetchall())
+    for r in rows:
+        if isinstance(r.get("by_level"), str):
+            try:
+                r["by_level"] = json.loads(r["by_level"])
+            except Exception:  # noqa: BLE001
+                r["by_level"] = {}
+    return rows
