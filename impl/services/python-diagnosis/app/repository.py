@@ -466,14 +466,22 @@ def sync_alerts(tenant_id: str, threshold_hi: float = 70.0,
 
     created = 0
     skipped = 0
+    superseded = 0
     now = datetime.datetime.now()
     with connect() as conn, conn.cursor() as cur:
         for r in rows:
             hi = float(r["hi"])
-            hit = next((x for x in rules
-                        if _OPS[x.get("op", "lt")](hi, float(x["threshold"]))), None)
-            if hit is None:
+            # 多个规则可能同时命中（hi=0 既 <70 又 <40）。必须取最严重的那条：
+            # 早先用 next() 取第一个匹配，而 hi_rules() 按阈值降序排，
+            # 导致 hi=0 命中宽松的 HI_WARNING(orange) 而非 HI_CRITICAL(red)，
+            # 告警等级比实际健康度低一级（全链路回归抓到）。
+            matches = [x for x in rules
+                       if _OPS[x.get("op", "lt")](hi, float(x["threshold"]))]
+            if not matches:
                 continue
+            sev = {"red": 2, "orange": 1, "yellow": 0}
+            hit = max(matches, key=lambda x: (sev.get(x["level"], 0),
+                                              -float(x["threshold"])))
             rule, lv = hit["rule_id"], hit["level"]
             role = hit.get("owner_role") or "maintenance_supervisor"
             sla = int(hit.get("sla_hours") or 24)
@@ -482,6 +490,18 @@ def sync_alerts(tenant_id: str, threshold_hi: float = 70.0,
             hint = ("立即停机检查，按方案卡执行紧急维修" if lv == "red"
                     else "安排计划检修窗口，检查振动与轴承状态")
 
+            # 1) 先收敛等级：把同一设备等级更低的未关闭告警关掉。
+            #    必须放在幂等判断之前——否则一旦高级告警已存在，下面就会
+            #    continue，低级告警永远没机会被收敛（实测 200 台同时挂红+橙）。
+            cur.execute(
+                "UPDATE alert SET status='CLOSED', ack_by='auto-superseded', "
+                "ack_action=%s WHERE tenant_id=%s AND asset_id=%s "
+                "AND status IN ('OPEN','ACKED','ESCALATED') AND level<>%s",
+                (f"被 {rule} 取代", tenant_id, r["asset_id"], lv),
+            )
+            superseded += cur.rowcount
+
+            # 2) 幂等：同一 (设备, 规则) 已有未关闭告警则不重复建单
             cur.execute(
                 "SELECT alert_id FROM alert WHERE tenant_id=%s AND asset_id=%s "
                 "AND rule_id=%s AND status IN ('OPEN','ACKED','ESCALATED') LIMIT 1",
@@ -505,7 +525,8 @@ def sync_alerts(tenant_id: str, threshold_hi: float = 70.0,
             "AND status IN ('OPEN','ACKED','ESCALATED')", (tenant_id,))
         total_open = cur.fetchone()["n"]
 
-    return {"created": created, "skipped": skipped, "total_open": total_open}
+    return {"created": created, "skipped": skipped, "superseded": superseded,
+            "total_open": total_open}
 
 
 def list_alerts(tenant_id: str, status: str = "", level: str = "",

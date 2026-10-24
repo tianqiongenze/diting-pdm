@@ -1120,12 +1120,22 @@ async function renderDashboard(){
     $('kpis').innerHTML = '<div class="kpi"><div class="l">加载中</div>' +
       '<div class="v" style="font-size:18px">…</div><div class="d">正在拉取设备快照</div></div>';
   }
-  const counts = {red:0, orange:0, yellow:0, green:0, none:0};
-  S.assets.forEach(a=>{
-    if(a.level && counts[a.level]!==undefined) counts[a.level]++;
-    else counts.none++;
-  });
-  const withData = S.assets.length - counts.none;
+  /* 四级分布必须取总览接口的全量统计：S.assets 只是 list_hot_assets 的
+     抽样（上限 200），用它算红/橙/黄/绿会把"抽样里的数量"当成"全厂数量"
+     （实测抽样 38 红 vs 全量 219 红，差 5 倍）。 */
+  const ov0 = await api('/v1/stats/overview');
+  const counts = (ov0 && ov0.by_level)
+    ? {red:ov0.by_level.red||0, orange:ov0.by_level.orange||0,
+       yellow:ov0.by_level.yellow||0, green:ov0.by_level.green||0, none:0}
+    : {red:0, orange:0, yellow:0, green:0, none:0};
+  if(!ov0 || !ov0.by_level){
+    S.assets.forEach(a=>{
+      if(a.level && counts[a.level]!==undefined) counts[a.level]++;
+      else counts.none++;
+    });
+  }
+  const withData = (ov0 && ov0.assessed != null) ? ov0.assessed
+                  : S.assets.filter(a=>a.level).length;
   const pending = S.cards.filter(c=>c.status!=='CONFIRMED').length;
   const done = S.cards.filter(c=>c.status==='CONFIRMED').length;
 
