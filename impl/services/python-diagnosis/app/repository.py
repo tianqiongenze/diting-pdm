@@ -549,7 +549,11 @@ def list_alerts(tenant_id: str, status: str = "", level: str = "",
     if level:
         sql += " AND a.level=%s"
         params.append(level)
-    sql += " ORDER BY a.created_at DESC LIMIT %s"
+    # 排序必须「可处置优先」再按时间：若只按 created_at DESC + LIMIT，
+    # 已关闭告警会把窗口占满——实测 519 条告警里最新 200 条全是
+    # auto-superseded 的已关闭项，导致告警中心 KPI 全 0、列表里一条待处置都看不到。
+    sql += (" ORDER BY CASE a.status WHEN 'OPEN' THEN 0 WHEN 'ACKED' THEN 1 "
+            "WHEN 'ESCALATED' THEN 2 ELSE 3 END, a.created_at DESC LIMIT %s")
     params.append(limit)
 
     # pymysql 的 fetchall() 返回 tuple，需转 list 才能排序
@@ -561,9 +565,45 @@ def list_alerts(tenant_id: str, status: str = "", level: str = "",
             age_h = (now - created).total_seconds() / 3600
             r["age_hours"] = round(age_h, 1)
             r["sla_remaining_hours"] = round(float(r.get("sla_hours") or 0) - age_h, 1)
-            r["overdue"] = r["sla_remaining_hours"] < 0
-    rows.sort(key=lambda x: (not x.get("overdue"), x.get("sla_remaining_hours", 999)))
+            # 已关闭告警谈 SLA 没有意义，不算 overdue
+            r["overdue"] = r["status"] != "CLOSED" and r["sla_remaining_hours"] < 0
+    rows.sort(key=lambda x: (x["status"] == "CLOSED", not x.get("overdue"),
+                             x.get("sla_remaining_hours", 999)))
     return rows
+
+
+def alert_summary(tenant_id: str) -> dict[str, Any]:
+    """告警汇总（不受列表窗口限制）。
+
+    为什么单独算：列表有 limit，KPI 若从列表统计，一旦待处置告警落在窗口外
+    就会显示 0。这里用 SQL 聚合，保证 KPI 始终是全量真值。
+    """
+    now = datetime.datetime.now()
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT status, level, COUNT(*) AS n FROM alert WHERE tenant_id=%s "
+            "GROUP BY status, level", (tenant_id,))
+        grouped = list(cur.fetchall())
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM alert WHERE tenant_id=%s "
+            "AND status IN ('OPEN','ACKED','ESCALATED') "
+            "AND TIMESTAMPADD(HOUR, sla_hours, created_at) < %s", (tenant_id, now))
+        overdue = int((cur.fetchone() or {}).get("n") or 0)
+
+    counts = {"OPEN": 0, "ACKED": 0, "ESCALATED": 0, "CLOSED": 0}
+    red_open = 0
+    for r in grouped:
+        st = r.get("status") or ""
+        lv = r.get("level") or ""
+        n = int(r.get("n") or 0)
+        if st in counts:
+            counts[st] += n
+        if lv == "red" and st != "CLOSED":
+            red_open += n
+    return {**counts, "red_open": red_open, "overdue": overdue,
+            "total": sum(counts.values()),
+            "active": counts["OPEN"] + counts["ACKED"] + counts["ESCALATED"]}
 
 
 def ack_alert(tenant_id: str, alert_id: str, action: str, by: str,

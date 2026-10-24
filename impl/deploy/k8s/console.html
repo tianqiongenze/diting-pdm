@@ -1979,14 +1979,23 @@ async function renderAlerts(){
   const list = (r && r.alerts) || [];
   AS.items = list;
 
+  /* KPI 必须取接口的 summary（SQL 聚合全量），不能从 list 统计：
+     列表有 limit，一旦待处置告警落在窗口外，KPI 会显示 0 而实际有几百条。 */
+  const sum = (r && r.summary) || null;
   const c = {OPEN:0, ACKED:0, ESCALATED:0, CLOSED:0};
   list.forEach(x=>{ if(c[x.status]!==undefined) c[x.status]++; });
-  const overdue = list.filter(x=>x.overdue && x.status !== 'CLOSED').length;
-  const red = list.filter(x=>x.level==='red' && x.status !== 'CLOSED').length;
+  if(sum){
+    c.OPEN = sum.OPEN || 0; c.ACKED = sum.ACKED || 0;
+    c.ESCALATED = sum.ESCALATED || 0; c.CLOSED = sum.CLOSED || 0;
+  }
+  const overdue = sum ? (sum.overdue || 0)
+                      : list.filter(x=>x.overdue && x.status !== 'CLOSED').length;
+  const red = sum ? (sum.red_open || 0)
+                  : list.filter(x=>x.level==='red' && x.status !== 'CLOSED').length;
 
   $('alert-kpis').innerHTML = `
     <div class="kpi r"><div class="l">红色告警</div><div class="v">${red}</div>
-      <div class="d">需 4 小时内处置</div></div>
+      <div class="d">全量未关闭 · 需 4 小时内处置</div></div>
     <div class="kpi y"><div class="l">待处置</div><div class="v">${c.OPEN}</div>
       <div class="d">尚未认领</div></div>
     <div class="kpi c"><div class="l">已确认</div><div class="v">${c.ACKED}</div>

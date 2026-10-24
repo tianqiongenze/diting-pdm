@@ -774,6 +774,15 @@ def test_ops_and_auth(pw) -> None:
         page.click("#login-submit"); page.wait_for_timeout(2000)
         page.goto(f"{BASE}/console#/alerts", wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(3000)
+    # 告警中心 KPI 取自 summary（全量），不应因列表窗口而显示 0
+    kpi_red = page.evaluate("""() => {const e=[...document.querySelectorAll('#alert-kpis .kpi')]
+        .find(k=>k.innerText.includes('红色告警')); return e?e.querySelector('.v').innerText:'-';}""")
+    kpi_open = page.evaluate("""() => {const e=[...document.querySelectorAll('#alert-kpis .kpi')]
+        .find(k=>k.innerText.includes('待处置')); return e?e.querySelector('.v').innerText:'-';}""")
+    check("F3.12a 告警中心红色 KPI 非 0（汇总口径回归）",
+          str(kpi_red).strip() not in ("0", "-", ""),
+          f"红色告警={kpi_red} 待处置={kpi_open}")
+
     ack = page.locator("#alert-rows button[data-ack]").first
     if ack.count():
         ack.click()
@@ -1045,6 +1054,28 @@ def test_full_chain(pw) -> None:
     check("H1.6b 同一设备不并存多等级告警", not conflicted,
           f"{len(conflicted)} 台冲突" + (f"（如 {conflicted[:3]}）" if conflicted else ""))
 
+    # 3b) 告警列表窗口与汇总（回归：曾因按 created_at DESC 取 200 条，
+    #     窗口被 200 条 auto-superseded 已关闭告警占满，KPI 全 0、看不到待处置）
+    r = c.get("/v1/alerts?limit=200")
+    body = r.json()
+    alerts_win = body.get("alerts") or []
+    summ = body.get("summary") or {}
+    check("H1.3c 告警接口返回全量汇总", "active" in summ and "red_open" in summ,
+          f"active={summ.get('active')} red_open={summ.get('red_open')} "
+          f"overdue={summ.get('overdue')}")
+    check("H1.3d 汇总与状态计数自洽",
+          summ.get("active") == (summ.get("OPEN", 0) + summ.get("ACKED", 0)
+                                 + summ.get("ESCALATED", 0)),
+          f"active={summ.get('active')} = "
+          f"{summ.get('OPEN')}+{summ.get('ACKED')}+{summ.get('ESCALATED')}")
+    open_in_win = [a for a in alerts_win if a["status"] != "CLOSED"]
+    check("H1.3e 列表窗口含未关闭告警（不被已关闭挤满）",
+          len(open_in_win) > 0,
+          f"窗口 {len(alerts_win)} 条中未关闭 {len(open_in_win)} 条")
+    check("H1.3f 列表首条为未关闭告警",
+          bool(alerts_win) and alerts_win[0]["status"] != "CLOSED",
+          f"首条 status={alerts_win[0]['status'] if alerts_win else '-'}")
+
     # 4) 会诊 → 方案卡 → 多角色确认
     r = c.post("/v1/consult", json={"tenant_id": "site-a", "asset_id": asset_id})
     card = (r.json() or {}).get("card") or {}
@@ -1113,10 +1144,17 @@ def test_full_chain(pw) -> None:
     page.on("response", lambda r: bad.append(f"{r.status} {r.url}") if r.status >= 400 else None)
     page.on("pageerror", lambda e: js.append(str(e)[:110]))
 
-    # 管理台
+    # 管理台：KPI 首屏有「加载中 …」占位，须轮询到真值再取。
+    # 固定等 3.2s 在批量诊断 CronJob 抢 CPU 时会偶发失败（实测过一次）。
     page.goto(f"{BASE}/console#/dashboard", wait_until="domcontentloaded", timeout=30000)
-    page.wait_for_timeout(3200)
-    con_total = page.locator("#kpis .kpi").first.locator(".v").inner_text()
+    con_total = "-"
+    for _ in range(80):                      # 最多等 20s
+        page.wait_for_timeout(250)
+        v = page.evaluate(
+            "() => document.querySelector('#kpis .kpi .v')?.innerText?.trim()")
+        if v and v not in ("…", ""):
+            con_total = v
+            break
     con_red = page.evaluate("() => {const e=[...document.querySelectorAll('#kpis .kpi')]"
                             ".find(k=>k.innerText.includes('红色')); "
                             "return e?e.querySelector('.v').innerText:'-';}")
@@ -1126,10 +1164,17 @@ def test_full_chain(pw) -> None:
     dash_total = page.evaluate("() => {const k=[...document.querySelectorAll('.kpi, .card, div')]"
                                ".filter(e=>e.children.length===0 && /^\\d+$/.test(e.innerText.trim()));"
                                "return k.length?k[0].innerText.trim():'-';}")
-    # 大屏
+    # 大屏：环心数字同样轮询
     page.goto(f"{BASE}/screen", wait_until="domcontentloaded", timeout=30000)
-    page.wait_for_timeout(4500)
-    scr_total = page.evaluate("() => document.getElementById('ring-big')?.textContent")
+    scr_total = "-"
+    for _ in range(80):
+        page.wait_for_timeout(250)
+        v = page.evaluate(
+            "() => document.getElementById('ring-big')?.textContent?.trim()")
+        if v and v not in ("…", "—", ""):
+            scr_total = v
+            break
+    page.wait_for_timeout(600)
     scr_red = page.evaluate("""() => {const l=[...document.querySelectorAll('#legend .lg')]
         .find(x=>x.innerText.includes('红')); return l?l.querySelector('.n').innerText:'-';}""")
 

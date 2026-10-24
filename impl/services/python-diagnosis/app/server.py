@@ -335,8 +335,12 @@ async def list_alerts_endpoint(request: Request, status: str = "", level: str = 
     tenant = request.headers.get("X-Tenant-Id")
     if not tenant:
         raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
-    rows = await asyncio.to_thread(repository.list_alerts, tenant, status, level, limit)
-    return {"tenant_id": tenant, "count": len(rows), "alerts": rows}
+    rows, summary = await asyncio.gather(
+        asyncio.to_thread(repository.list_alerts, tenant, status, level, limit),
+        asyncio.to_thread(repository.alert_summary, tenant),
+    )
+    return {"tenant_id": tenant, "count": len(rows), "alerts": rows,
+            "summary": summary}
 
 
 @post("/v1/alerts/{alert_id:str}/ack", status_code=200)
