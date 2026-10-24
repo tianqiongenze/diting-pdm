@@ -130,3 +130,94 @@ spec:
                 -d '{"critical_hi":40}'
               echo
               echo "[$(date -Iseconds)] RUL 刷新完成"
+---
+# 批量诊断 CronJob
+#
+# 背景（关键缺口）：此前生产环境没有任何任务调用 /v1/diagnose，
+# read_asset_health 只被测试脚本点过的那 6 台填充，1200 台在监设备里
+# 99.5% 没有健康指数——看板上的"在监设备"实际是"已评估设备"。
+# 本 CronJob 每 15 分钟跑一次全量诊断，刷新读模型。
+#
+# 鉴权：/v1/diagnose/batch 需 plan.edit 权限，故先用机器账号登录取 token。
+# 机器账号凭据来自 Secret（batch-user / batch-pass），不硬编码在 YAML 里。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: batch-diagnose
+  namespace: pdm-prod
+  labels:
+    app: pdm-ops
+    component: batch-diagnose
+spec:
+  schedule: "*/15 * * * *"        # 每 15 分钟
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 3600
+      activeDeadlineSeconds: 900   # 全量诊断超时保护
+      template:
+        metadata:
+          labels:
+            app: pdm-ops
+            component: batch-diagnose
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 100
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: batch
+            image: 10.167.2.175:30500/library/curl:8.23.0
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: ["ALL"]
+            env:
+            - name: BATCH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pdm-dashboard-auth
+                  key: batch-user
+            - name: BATCH_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: pdm-dashboard-auth
+                  key: batch-pass
+            resources:
+              requests:
+                cpu: 10m
+                memory: 16Mi
+              limits:
+                cpu: 200m
+                memory: 64Mi
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "[$(date -Iseconds)] 开始批量诊断"
+              # 1) 登录取 token（curl 镜像无 jq，用 grep 截取）
+              TOKEN=$(curl -fsS --max-time 20 \
+                -X POST http://python-diagnosis:8000/v1/auth/login \
+                -H "Content-Type: application/json" \
+                -d "{\"username\":\"$BATCH_USER\",\"password\":\"$BATCH_PASS\"}" \
+                | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+              if [ -z "$TOKEN" ]; then echo "登录失败"; exit 1; fi
+              echo "已取得 token（长度 ${#TOKEN}）"
+              # 2) 全量诊断
+              curl -fsS --max-time 600 \
+                -X POST http://python-diagnosis:8000/v1/diagnose/batch \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-Id: site-a" \
+                -H "X-Auth-Token: $TOKEN" \
+                -d '{"limit":5000}'
+              echo
+              echo "[$(date -Iseconds)] 批量诊断完成"

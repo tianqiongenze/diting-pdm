@@ -302,6 +302,7 @@ h1{font-size:23px;font-weight:650;letter-spacing:.5px;
               <div class="ring-center">
                 <div class="big" id="ring-big">—</div>
                 <div class="lbl">在监设备</div>
+                <div class="lbl" id="ring-sub" style="font-size:10px;opacity:.75;margin-top:1px"></div>
               </div>
             </div>
             <div class="legend" id="legend"></div>
@@ -426,7 +427,7 @@ $('fs').onclick = () => {
 };
 
 /* ===== 环形图 ===== */
-function drawRing(counts, total){
+function drawRing(counts, total, assessed){
   const size=150, r=62, cx=75, cy=75, w=13;
   const C = 2*Math.PI*r;
   const order = ['red','orange','yellow','green'];
@@ -444,13 +445,14 @@ function drawRing(counts, total){
   });
   $('ring').innerHTML = svg;
 
-  const withData = order.reduce((s,k)=>s+(counts[k]||0),0);
-  $('ring-big').textContent = withData || '—';
+  const inRing = order.reduce((s,k)=>s+(counts[k]||0),0);
+  $('ring-big').textContent = total || '—';
+  $('ring-sub').textContent = `已评估 ${assessed != null ? assessed : inRing} 台`;
   $('total-tag').textContent = `共 ${total} 台在监`;
 
   $('legend').innerHTML = order.map(k=>{
     const v = counts[k]||0;
-    const pct = withData ? (v/withData*100).toFixed(1) : '0.0';
+    const pct = inRing ? (v/inRing*100).toFixed(1) : '0.0';
     return `<div class="lg">
       <i style="background:${LVC[k]};box-shadow:0 0 8px ${LVC[k]}88"></i>
       <span style="color:var(--txt-2)">${LV[k]}</span>
@@ -629,9 +631,19 @@ async function load(){
   /* 1. 设备 */
   const hot = await mcp('list_hot_assets', {limit: 300});
   const assets = (hot && hot.assets) || [];
-  const counts = {red:0, orange:0, yellow:0, green:0};
-  assets.forEach(a=>{ if(a.level && counts[a.level]!==undefined) counts[a.level]++; });
-  drawRing(counts, assets.length);
+  /* 环形图与总数一律取总览接口：assets 只是 list_hot_assets 的抽样（上限 300），
+     用它算分布会把"抽样里的比例"当成"全厂比例"，环心也会显示成 300。
+     总览接口返回全量 1200 台的四级分布与已评估数。 */
+  const ov = await api('/v1/stats/overview');
+  const counts = (ov && ov.by_level) ? {...ov.by_level}
+                                     : {red:0, orange:0, yellow:0, green:0};
+  if(!ov || !ov.by_level){
+    assets.forEach(a=>{ if(a.level && counts[a.level]!==undefined) counts[a.level]++; });
+  }
+  const totalAssets = (ov && ov.total_assets != null) ? ov.total_assets : assets.length;
+  const assessed = (ov && ov.assessed != null) ? ov.assessed
+                   : Object.values(counts).reduce((a,b)=>a+b,0);
+  drawRing(counts, totalAssets, assessed);
   drawMatrix(assets);
   drawTicker(assets);
 

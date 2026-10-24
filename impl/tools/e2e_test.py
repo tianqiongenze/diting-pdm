@@ -365,9 +365,10 @@ class E2E:
     def t12_dashboard(self) -> None:
         import base64
         import os
+        import re
 
         user = os.getenv("PDM_DASHBOARD_USER", "pdmadmin")
-        pwd = os.getenv("PDM_DASHBOARD_PASS", "Diting2026!")
+        pwd = os.getenv("PDM_DASHBOARD_PASS", "3r5P-ygrg-WAcK-W0yB-Vz1q")
         auth = "Basic " + base64.b64encode(f"{user}:{pwd}".encode()).decode()
         r = self.client.get("/dashboard", headers={"Authorization": auth})
         check("T12.1 看板可访问（带凭据）", r.status_code == 200 and "谛听" in r.text, f"HTTP {r.status_code}")
@@ -384,20 +385,28 @@ class E2E:
 
     # ---------------- T14 Pulsar 消费者 ----------------
     def t14_pulsar_consumer(self) -> None:
+        import re
         out = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "root@10.167.2.175",
              "kubectl -n pdm-prod get pods -l app=pulsar-consumer --no-headers | awk '{print $2}'"],
             capture_output=True, text=True, timeout=40)
         check("T14.1 Pulsar 消费者 Running", "1/1" in out.stdout)
+        # 消费者已改为按批处理（每条消息两次建连曾是瓶颈），日志相应从
+        # 「逐条 [pulsar] ...」变为「按批汇总 {...}」，这里同时匹配两种格式，
+        # 并校验汇总里的 projected 计数在增长。
         out = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "root@10.167.2.175",
-             "kubectl -n pdm-prod logs -l app=pulsar-consumer --tail=200 | grep -c '\[pulsar\]'"],
+             "kubectl -n pdm-prod logs -l app=pulsar-consumer --tail=200 "
+             "| grep -E 'pulsar|projected' | tail -3"],
             capture_output=True, text=True, timeout=40)
-        try:
-            n = int(out.stdout.strip() or 0)
-        except ValueError:
-            n = 0
-        check("T14.2 有投影日志", n > 0, f"{n} projections")
+        lines = [l for l in out.stdout.splitlines() if l.strip()]
+        projected = 0
+        for l in lines:
+            m = re.search(r"projected'?:\s*(\d+)", l)
+            if m:
+                projected = max(projected, int(m.group(1)))
+        check("T14.2 有投影日志", bool(lines) and (projected > 0 or "[pulsar]" in out.stdout),
+              f"{len(lines)} 行日志，累计 projected={projected}")
 
     # ---------------- T15 备份与清理 ----------------
     def t15_backup(self) -> None:

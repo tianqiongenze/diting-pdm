@@ -24,7 +24,7 @@ SSH_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=no -o LogLevel=ERROR -o Conn
 
 BASE_URL="http://10.167.2.175:32231/pdm-api"
 INGRESS_HOST="pdm-api.10.167.2.175.nip.io"
-BASIC="pdmadmin:Diting2026!"
+BASIC="pdmadmin:3r5P-ygrg-WAcK-W0yB-Vz1q"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 K8S_DIR="$HERE/../deploy/k8s"

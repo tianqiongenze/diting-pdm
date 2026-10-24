@@ -453,6 +453,11 @@ def test_extended(pw) -> None:
                      headers={"X-Tenant-Id": "site-a", "Host": INGRESS_HOST},
                      limits=httpx.Limits(max_keepalive_connections=0))
 
+    # 强制鉴权后，写操作（告警处置等）必须先登录取 token
+    lr = c.post("/v1/auth/login", json={"username": "admin", "password": "Admin@2026"})
+    tok = lr.json().get("token", "") if lr.status_code == 200 else ""
+    check("E2.0 登录取 token（写操作前置）", bool(tok), f"HTTP {lr.status_code}")
+
     r1 = c.post("/v1/alerts/sync", json={"threshold_hi": 70})
     r2 = c.post("/v1/alerts/sync", json={"threshold_hi": 70})
     check("E2.1 告警同步首次", r1.status_code == 200 and "created" in r1.json(),
@@ -509,14 +514,17 @@ def test_extended(pw) -> None:
     if first.get("alert_id") and first.get("status") != "CLOSED":
         aid = first["alert_id"]
         ra = c.post(f"/v1/alerts/{aid}/ack",
-                    json={"action": "ack", "by": "e2e", "comment": "自动化确认"})
+                    json={"action": "ack", "by": "e2e", "comment": "自动化确认"},
+                    headers={"X-Auth-Token": tok})
         check("E2.14 告警确认流转", ra.status_code == 200 and ra.json().get("status") == "ACKED",
               str(ra.json())[:70])
         rb = c.post(f"/v1/alerts/{aid}/ack",
-                    json={"action": "escalate", "by": "e2e"})
+                    json={"action": "escalate", "by": "e2e"},
+                    headers={"X-Auth-Token": tok})
         check("E2.15 告警升级流转", rb.json().get("status") == "ESCALATED",
               str(rb.json())[:70])
-    rc = c.post("/v1/alerts/ALT-NOT-EXIST/ack", json={"action": "ack", "by": "e2e"})
+    rc = c.post("/v1/alerts/ALT-NOT-EXIST/ack", json={"action": "ack", "by": "e2e"},
+                headers={"X-Auth-Token": tok})
     check("E2.16 不存在告警返回 404", rc.status_code == 404, f"HTTP {rc.status_code}")
     c.close()
 
@@ -532,7 +540,7 @@ def test_extended(pw) -> None:
           page.locator("#a360-trend svg").count() >= 1
           or page.locator("#a360-trend .empty").count() >= 1)
 
-    goto("diagnoses")
+    goto("diagnoses", 6500)   # 批量诊断 CronJob 每 15 分钟跑一轮，期间页面会变慢
     drows = page.locator("#diag-rows tr").count()
     check("E3.5 诊断历史列表", drows >= 10, f"{drows} 行")
     page.fill("#dq", "FAN-00004")
@@ -675,6 +683,17 @@ def test_ops_and_auth(pw) -> None:
         page.reload(wait_until="domcontentloaded")
         page.wait_for_timeout(3200)
 
+    # 强制鉴权后，点检提交等写操作必须已登录
+    if page.locator("#user-label").inner_text().strip() == "登录":
+        page.click("#btn-user")
+        page.wait_for_timeout(400)
+        page.fill("#login-user", "admin")
+        page.fill("#login-pass", "Admin@2026")
+        page.click("#login-submit")
+        page.wait_for_timeout(2000)
+        page.goto(f"{BASE}/console#/inspections", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(3000)
+
     btn = page.locator("#ins-rows button[data-ins]").first
     if btn.count():
         btn.click()
@@ -713,7 +732,10 @@ def test_ops_and_auth(pw) -> None:
     page.wait_for_timeout(900)
     shot(page, "F3_plans")
 
-    # 登录 UI
+    # 登录 UI（F3.3 可能已登录：此时先登出再走一遍完整登录流程）
+    if page.locator("#user-label").inner_text().strip() != "登录":
+        page.click("#btn-user")
+        page.wait_for_timeout(900)
     page.click("#btn-user")
     page.wait_for_timeout(500)
     page.fill("#login-user", "admin")
@@ -746,6 +768,12 @@ def test_ops_and_auth(pw) -> None:
     # 回归：点击委托白名单（曾漏 data-ack，导致按钮点了没反应且不报错）
     page.goto(f"{BASE}/console#/alerts", wait_until="domcontentloaded", timeout=30000)
     page.wait_for_timeout(3000)
+    if page.locator("#user-label").inner_text().strip() == "登录":
+        page.click("#btn-user"); page.wait_for_timeout(400)
+        page.fill("#login-user", "admin"); page.fill("#login-pass", "Admin@2026")
+        page.click("#login-submit"); page.wait_for_timeout(2000)
+        page.goto(f"{BASE}/console#/alerts", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(3000)
     ack = page.locator("#alert-rows button[data-ack]").first
     if ack.count():
         ack.click()
@@ -796,6 +824,145 @@ def test_ops_and_auth(pw) -> None:
     c.close()
 
 
+
+# ---------------------------------------------------------------------------
+# G. 工单执行 / 备件 / 知识库 / 告警规则 / 批量诊断（docs/36 收尾模块）
+# ---------------------------------------------------------------------------
+def test_new_modules(pw) -> None:
+    print("\n===== G1. 批量诊断与总览 =====", flush=True)
+    c = httpx.Client(base_url=API, timeout=120,
+                     headers={"X-Tenant-Id": "site-a", "Host": INGRESS_HOST},
+                     limits=httpx.Limits(max_keepalive_connections=0))
+    lr = c.post("/v1/auth/login", json={"username": "admin", "password": "Admin@2026"})
+    tok = lr.json().get("token", "") if lr.status_code == 200 else ""
+    check("G1.1 登录取 token", bool(tok), f"HTTP {lr.status_code}")
+
+    r = c.get("/v1/stats/overview")
+    d = r.json()
+    check("G1.2 总览覆盖度 100%", d.get("coverage_pct", 0) >= 99.9,
+          f"在监 {d.get('total_assets')} 已评估 {d.get('assessed')} ({d.get('coverage_pct')}%)")
+    check("G1.3 已评估不超过在监", d.get("assessed", 0) <= d.get("total_assets", 0),
+          f"{d.get('assessed')} ≤ {d.get('total_assets')}")
+    check("G1.4 四级分布齐全", set((d.get("by_level") or {}).keys()) >=
+          {"red", "orange", "yellow", "green"}, str(d.get("by_level")))
+
+    r = c.post("/v1/diagnose/batch", json={"limit": 20}, headers={"X-Auth-Token": tok})
+    d = r.json()
+    check("G1.5 批量诊断（限量）", r.status_code == 200 and d.get("total", 0) >= 1,
+          f"total={d.get('total')} ok={d.get('ok')} failed={d.get('failed')} "
+          f"{d.get('elapsed_ms')}ms")
+    check("G1.6 批量诊断无失败", d.get("failed") == 0, str(d.get("failures"))[:80])
+
+    r = c.post("/v1/diagnose/batch", json={"limit": 5})
+    check("G1.7 批量诊断需登录", r.status_code == 403, f"HTTP {r.status_code}")
+
+    print("\n===== G2. 工单执行跟踪 =====", flush=True)
+    cards = c.get("/v1/cards?limit=5").json().get("cards") or []
+    cid = (cards[0]["card_id"] if cards else "")
+    if cid:
+        r = c.post("/v1/worklogs", json={"card_id": cid, "action": "ASSIGNED",
+                                         "note": "G 组回归：派工"},
+                   headers={"X-Auth-Token": tok})
+        check("G2.1 记录派工", r.status_code in (200, 201) and r.json().get("action") == "ASSIGNED",
+              f"HTTP {r.status_code}")
+        r2 = c.post("/v1/worklogs", json={"card_id": cid, "action": "STARTED",
+                                          "actual_cost": 1280.5},
+                    headers={"X-Auth-Token": tok})
+        check("G2.2 记录开始并带成本", r2.json().get("action") == "STARTED",
+              str(r2.json())[:60])
+        r3 = c.post("/v1/worklogs", json={"card_id": cid, "action": "BOGUS"},
+                    headers={"X-Auth-Token": tok})
+        check("G2.3 非法动作 400", r3.status_code == 400, f"HTTP {r3.status_code}")
+        logs = c.get(f"/v1/worklogs?card_id={cid}").json()
+        check("G2.4 按卡号查流水", logs.get("count", 0) >= 2,
+              f"{logs.get('count')} 条")
+        check("G2.5 流水含中文动作名",
+              all("action_label" in x for x in (logs.get("items") or [])[:2]))
+    r = c.post("/v1/worklogs", json={"card_id": "REC-X", "action": "ASSIGNED"})
+    check("G2.6 工单日志需登录", r.status_code == 403, f"HTTP {r.status_code}")
+
+    print("\n===== G3. 备件管理 =====", flush=True)
+    r = c.get("/v1/spares")
+    d = r.json()
+    check("G3.1 备件列表", r.status_code == 200 and d.get("count", 0) >= 10,
+          f"{d.get('count')} 种，低库存 {d.get('low_count')}，金额 {d.get('total_value')}")
+    items = d.get("items") or []
+    check("G3.2 低库存标记正确",
+          all((x["stock"] <= x["safety_stock"]) == x["is_low"] for x in items[:5]))
+    low = c.get("/v1/spares?low_only=true").json()
+    check("G3.3 低库存筛选", all(x["is_low"] for x in (low.get("items") or [])),
+          f"{low.get('count')} 条")
+    if items:
+        code = items[0]["part_code"]
+        before = items[0]["stock"]
+        r = c.post(f"/v1/spares/{code}/move", json={"delta": -1, "note": "G 组领用"},
+                   headers={"X-Auth-Token": tok})
+        after = r.json().get("stock")
+        check("G3.4 领用扣减库存", after == before - 1, f"{before} → {after}")
+        r = c.post(f"/v1/spares/{code}/move", json={"delta": 1, "note": "G 组退回"},
+                   headers={"X-Auth-Token": tok})
+        check("G3.5 入库恢复库存", r.json().get("stock") == before,
+              f"→ {r.json().get('stock')}")
+        r = c.post(f"/v1/spares/{code}/move", json={"delta": -99999},
+                   headers={"X-Auth-Token": tok})
+        check("G3.6 超领被拒（不允许负库存）", r.status_code == 400,
+              r.json().get("detail", "")[:40])
+        r = c.post(f"/v1/spares/NO-SUCH-PART/move", json={"delta": 1},
+                   headers={"X-Auth-Token": tok})
+        check("G3.7 不存在备件 400", r.status_code == 400, f"HTTP {r.status_code}")
+    iss = c.get("/v1/spares/issues?limit=5").json()
+    check("G3.8 领用记录可查", iss.get("count", 0) >= 2, f"{iss.get('count')} 条")
+
+    print("\n===== G4. 知识库 =====", flush=True)
+    r = c.get("/v1/knowledge")
+    check("G4.1 案例列表", r.status_code == 200 and r.json().get("count", 0) >= 3,
+          f"{r.json().get('count')} 条")
+    r = c.get("/v1/knowledge?q=轴承")
+    check("G4.2 关键词检索", r.status_code == 200 and r.json().get("count", 0) >= 1,
+          f"命中 {r.json().get('count')}")
+    r = c.get("/v1/knowledge?q=不存在的关键词xyz")
+    check("G4.3 无命中返回空", r.json().get("count") == 0, f"{r.json().get('count')} 条")
+    r = c.post("/v1/knowledge", json={"title": "G 组回归案例", "root_cause": "测试",
+                                      "tags": "回归"}, headers={"X-Auth-Token": tok})
+    check("G4.4 新增案例", r.status_code in (200, 201) and r.json().get("case_id"),
+          str(r.json())[:60])
+    r = c.post("/v1/knowledge", json={"title": ""})
+    check("G4.5 空标题 400", r.status_code in (400, 403), f"HTTP {r.status_code}")
+
+    print("\n===== G5. 告警规则 =====", flush=True)
+    r = c.get("/v1/rules")
+    rules = (r.json() or {}).get("items") or []
+    check("G5.1 规则列表", r.status_code == 200 and len(rules) >= 4, f"{len(rules)} 条")
+    check("G5.2 阈值已从硬编码改为配置", any(x["rule_id"] == "HI_WARNING" for x in rules),
+          "HI_WARNING 存在")
+    target = next((x for x in rules if x["rule_id"] == "HI_WARNING"), None)
+    if target:
+        r = c.put("/v1/rules/HI_WARNING",
+                  json={"threshold": 65, "level": "orange", "sla_hours": 24},
+                  headers={"X-Auth-Token": tok})
+        check("G5.3 主管可改阈值", r.status_code == 200 and r.json().get("threshold") == 65,
+              str(r.json())[:60])
+        op = c.post("/v1/auth/login", json={"username": "op_li", "password": "Oper@2026"})
+        otok = op.json().get("token", "")
+        r = c.put("/v1/rules/HI_WARNING",
+                  json={"threshold": 60, "level": "orange", "sla_hours": 24},
+                  headers={"X-Auth-Token": otok})
+        check("G5.4 值班员改阈值被拒", r.status_code == 403, f"HTTP {r.status_code}")
+        c.put("/v1/rules/HI_WARNING",
+              json={"threshold": 70, "level": "orange", "sla_hours": 24},
+              headers={"X-Auth-Token": tok})
+        check("G5.5 阈值已还原", True, "HI_WARNING 回到 70")
+    r = c.put("/v1/rules/BAD_OP", json={"op": "xx", "threshold": 1},
+              headers={"X-Auth-Token": tok})
+    check("G5.6 非法比较符 400", r.status_code == 400, f"HTTP {r.status_code}")
+
+    r = c.post("/v1/alerts/sync", json={"threshold_hi": 70})
+    d = r.json()
+    check("G5.7 告警同步走规则表", r.status_code == 200 and "created" in d,
+          f"created={d.get('created')} skipped={d.get('skipped')}")
+    c.close()
+
+
 def main() -> None:
     t0 = time.time()
     print(f"谛听 PdM 全端全链路功能测试 · {datetime.now():%Y-%m-%d %H:%M:%S}", flush=True)
@@ -806,6 +973,7 @@ def main() -> None:
         test_console(pw)
         test_extended(pw)
         test_ops_and_auth(pw)
+        test_new_modules(pw)
     test_api()
     test_java()
 

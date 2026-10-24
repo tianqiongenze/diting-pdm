@@ -8,7 +8,7 @@
 /* ===== 设计系统 · 浅色管理台 ===== */
 :root{
   --bg:#F4F6FA; --panel:#FFFFFF; --panel-2:#FAFBFD; --line:#E4E9F2; --line-2:#CFD8E6;
-  --txt:#0F172A; --txt-2:#5B6B84; --txt-3:#94A3B8;
+  --txt:#0F172A; --txt-2:#5B6B84; --txt-3:#55637D;   /* 原 #94A3B8 对比仅 2.3:1，不达 WCAG AA */
   --accent:#1D4ED8; --accent-l:#EFF4FF; --accent-2:#4F46E5;
   --red:#E11D48; --red-l:#FFF1F4;
   --orange:#EA580C; --orange-l:#FFF6ED;
@@ -30,7 +30,7 @@
 body.dark{
   --bg:#0B1220; --panel:#131C2B; --panel-2:#0F1826;
   --line:#1F2B3D; --line-2:#2A3A52;
-  --txt:#E6EDF7; --txt-2:#9FB0C8; --txt-3:#6B7E99;
+  --txt:#E6EDF7; --txt-2:#9FB0C8; --txt-3:#8496AF;   /* 原 #6B7E99 对比 4.0:1，不达 AA */
   --accent:#3B82F6; --accent-l:#15233A; --accent-2:#818CF8;
   --red:#F43F5E; --red-l:#2A1420;
   --orange:#FB923C; --orange-l:#2A1D12;
@@ -399,14 +399,26 @@ tbody tr:last-child td{border-bottom:0}
   </div>
   <div class="nsep"></div>
   <div class="ngroup">
+    <a href="#/spares" data-tip="备件管理" data-v="spares">
+      <svg viewBox="0 0 24 24"><path d="M3.5 8.5 12 3.5l8.5 5v7L12 20.5l-8.5-5z"/><path d="M3.5 8.5 12 13.5l8.5-5M12 13.5v7"/></svg>
+    </a>
     <a href="#/inspections" data-tip="点检巡检" data-v="inspections">
       <svg viewBox="0 0 24 24"><path d="M9 4h6M9 4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2"/><path d="M9 11l2 2 3.5-3.5"/></svg>
     </a>
     <a href="#/plans" data-tip="保养计划" data-v="plans">
       <svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M8 3v4M16 3v4M3.5 10h17M8 14h3M8 17.5h6"/></svg>
     </a>
+    <a href="#/knowledge" data-tip="知识库" data-v="knowledge">
+      <svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M8 7.5h8M8 11h5"/></svg>
+    </a>
     <a href="#/cards" data-tip="工单看板" data-v="cards">
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="16" rx="1.5"/><rect x="10.5" y="4" width="6" height="11" rx="1.5"/><rect x="18" y="4" width="3" height="16" rx="1.5"/></svg>
+    </a>
+    <a href="#/worklogs" data-tip="工单执行" data-v="worklogs">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2.2"/></svg>
+    </a>
+    <a href="#/rules" data-tip="告警规则" data-v="rules">
+      <svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg>
     </a>
     <a href="#/system" data-tip="系统运维" data-v="system">
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>
@@ -803,6 +815,115 @@ tbody tr:last-child td{border-bottom:0}
   </section>
 
 
+  <!-- ===== 备件管理 ===== -->
+  <section class="view" id="v-spares">
+    <div class="kpis" id="sp-kpis"></div>
+    <div class="card grow">
+      <div class="filters">
+        <input type="search" id="sp-q" placeholder="按备件号/名称筛选">
+        <div class="seg" id="seg-sp">
+          <button class="on" data-l="">全部</button>
+          <button data-l="1">低于安全库存</button>
+        </div>
+        <span class="count" id="sp-count">—</span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>备件号</th><th>名称</th><th>规格</th><th>库位</th>
+            <th>库存</th><th>安全库存</th><th>单价</th><th>库存金额</th><th style="text-align:right">操作</th>
+          </tr></thead>
+          <tbody id="sp-rows"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-h"><h2>领用 / 入库记录</h2><span class="sub" id="sp-issue-sub">—</span></div>
+      <div class="tbl-wrap" style="max-height:300px">
+        <table>
+          <thead><tr><th>单号</th><th>备件号</th><th>数量</th><th>关联工单</th><th>设备</th><th>操作人</th><th>时间</th></tr></thead>
+          <tbody id="sp-issue-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 知识库 ===== -->
+  <section class="view" id="v-knowledge">
+    <div class="kpis" id="kb-kpis"></div>
+    <div class="card grow">
+      <div class="filters">
+        <input type="search" id="kb-q" placeholder="搜索标题 / 根因 / 标签 / 设备号">
+        <button class="btn sm" id="btn-kb-new">新增案例</button>
+        <span class="count" id="kb-count">—</span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th style="min-width:220px">案例</th><th>设备</th><th>根因</th>
+            <th>处理</th><th>标签</th><th>来源</th><th style="text-align:right">操作</th>
+          </tr></thead>
+          <tbody id="kb-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 告警规则 ===== -->
+  <section class="view" id="v-rules">
+    <div class="kpis" id="rl-kpis"></div>
+    <div class="card grow">
+      <div class="card-h">
+        <h2>告警规则</h2>
+        <span class="sub">阈值与 SLA 可配置，保存后下一轮告警同步即生效</span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>规则号</th><th>名称</th><th>指标</th><th>条件</th>
+            <th>阈值</th><th>等级</th><th>SLA</th><th>状态</th><th style="text-align:right">操作</th>
+          </tr></thead>
+          <tbody id="rl-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 工单执行 ===== -->
+  <section class="view" id="v-worklogs">
+    <div class="kpis" id="wl-kpis"></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-h"><h2>记录执行动作</h2><span class="sub">派工 → 开始 → 完成 → 验收 → 关闭</span></div>
+      <div class="card-b" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+        <div class="field" style="min-width:220px"><label>方案卡号</label>
+          <input id="wl-card" placeholder="REC-…"></div>
+        <div class="field" style="min-width:150px"><label>动作</label>
+          <select id="wl-action" style="height:36px;border:1px solid var(--line);border-radius:9px;padding:0 10px;font-family:inherit">
+            <option>ASSIGNED</option><option>STARTED</option><option>COMPLETED</option>
+            <option>ACCEPTED</option><option>CLOSED</option>
+          </select></div>
+        <div class="field" style="min-width:180px"><label>实际成本（元，可选）</label>
+          <input id="wl-cost" type="number" placeholder="0.00"></div>
+        <div class="field" style="flex:1;min-width:200px"><label>备注</label>
+          <input id="wl-note" placeholder="如：已更换轴承并复测"></div>
+        <button class="btn pri" id="btn-wl-submit" style="height:36px">提交</button>
+      </div>
+    </div>
+    <div class="card grow">
+      <div class="card-h"><h2>执行流水</h2><span class="sub" id="wl-sub">—</span></div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>时间</th><th>方案卡</th><th>动作</th><th>操作人</th>
+            <th>实际成本</th><th>备注</th>
+          </tr></thead>
+          <tbody id="wl-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+
 </div>
 <div class="drawer-mask" id="mask"></div>
 <div class="drawer" id="drawer">
@@ -946,6 +1067,10 @@ const VIEWS = {
   cost:      {title:'成本效益', crumb:'投入产出分析', fn: renderCost},
   inspections:{title:'点检巡检', crumb:'按计划执行点检', fn: renderInspections},
   plans:     {title:'保养计划', crumb:'周期与到期管理', fn: renderPlans},
+  spares:    {title:'备件管理', crumb:'库存与领用',     fn: renderSpares},
+  knowledge: {title:'知识库',   crumb:'故障案例沉淀',   fn: renderKnowledge},
+  worklogs:  {title:'工单执行', crumb:'执行跟踪流水',   fn: renderWorklogs},
+  rules:     {title:'告警规则', crumb:'阈值与 SLA',     fn: renderRules},
   cards:     {title:'工单看板', crumb:'方案卡闭环',   fn: renderCards},
   system:    {title:'系统运维', crumb:'服务与数据状态', fn: renderSystem},
 };
@@ -1004,9 +1129,15 @@ async function renderDashboard(){
   const pending = S.cards.filter(c=>c.status!=='CONFIRMED').length;
   const done = S.cards.filter(c=>c.status==='CONFIRMED').length;
 
+  /* 在监设备数必须取总览接口：S.assets 受 list_hot_assets 的展示上限约束，
+     把它当总量会把 1200 台显示成 200（曾长期如此）。 */
+  const ov = await api('/v1/stats/overview');
+  const totalAssets = (ov && ov.total_assets != null) ? ov.total_assets : S.assets.length;
+  const assessed = (ov && ov.assessed != null) ? ov.assessed : withData;
+
   $('kpis').innerHTML = `
-    <div class="kpi"><div class="l">在监设备</div><div class="v">${S.assets.length}</div>
-      <div class="d">其中 <i>${withData}</i> 台有健康度</div></div>
+    <div class="kpi"><div class="l">在监设备</div><div class="v">${totalAssets}</div>
+      <div class="d">已评估 <i>${assessed}</i> 台（${(ov && ov.coverage_pct) ?? '—'}%）· 本页展示前 ${S.assets.length}</div></div>
     <div class="kpi r"><div class="l"><span style="width:6px;height:6px;border-radius:50%;background:var(--red);display:inline-block"></span>红色</div>
       <div class="v">${counts.red}</div><div class="d">需立即处置</div></div>
     <div class="kpi o"><div class="l">橙色</div><div class="v">${counts.orange}</div>
@@ -1427,7 +1558,7 @@ document.addEventListener('click', async e=>{
   /* 白名单必须与所有可交互属性同步：早期只列了 5 个，导致后来新增的
      data-ack / data-esc / data-asset360 / data-orgfilter / data-ins
      分支全是死代码（按钮点了没反应，且不报错）。 */
-  const t = e.target.closest('[data-diag],[data-trend],[data-confirm],[data-asset],[data-card],[data-ack],[data-esc],[data-ins],[data-asset360],[data-orgfilter]');
+  const t = e.target.closest('[data-diag],[data-trend],[data-confirm],[data-asset],[data-card],[data-ack],[data-esc],[data-ins],[data-asset360],[data-orgfilter],[data-issue],[data-restock],[data-delcase],[data-saverule]');
   if(!t) return;
 
   if(t.dataset.confirm){
@@ -1459,6 +1590,50 @@ document.addEventListener('click', async e=>{
     $('trend-asset').value = t.dataset.trend;
     closeDrawer();
     setTimeout(()=>loadTrend(t.dataset.trend), 120);
+    return;
+  }
+  if(t.dataset.issue){
+    const code = t.dataset.issue;
+    if(!canDo('card.confirm')){ toast('当前角色无 card.confirm 权限，请用主管账号登录'); return; }
+    t.disabled = true;
+    const r = await api(`/v1/spares/${encodeURIComponent(code)}/move`,
+      {method:'POST', body:JSON.stringify({delta:-1, note:'看板领用'})});
+    t.disabled = false;
+    toast(r && r.stock != null ? `${code} 领用 1，剩余 ${r.stock}` : '领用失败：' + ((r && r.detail) || '未知'));
+    renderSpares();
+    return;
+  }
+  if(t.dataset.restock){
+    const code = t.dataset.restock;
+    if(!canDo('plan.edit')){ toast('当前角色无 plan.edit 权限，请用主管账号登录'); return; }
+    t.disabled = true;
+    const r = await api(`/v1/spares/${encodeURIComponent(code)}/move`,
+      {method:'POST', body:JSON.stringify({delta:10, note:'看板入库'})});
+    t.disabled = false;
+    toast(r && r.stock != null ? `${code} 入库 10，现有 ${r.stock}` : '入库失败：' + ((r && r.detail) || '未知'));
+    renderSpares();
+    return;
+  }
+  if(t.dataset.delcase){
+    const cid = t.dataset.delcase;
+    if(!confirm(`确认删除案例 ${cid}？`)) return;
+    toast('知识库暂未开放删除（只增不删，保证经验不丢失）');
+    return;
+  }
+  if(t.dataset.saverule){
+    const rid = t.dataset.saverule;
+    if(!canDo('plan.approve')){ toast('当前角色无 plan.approve 权限，请用设备主管登录'); return; }
+    const row = t.closest('tr');
+    const body = {
+      threshold: Number(row.querySelector('.rl-th').value),
+      level: row.querySelector('.rl-lv').value,
+      sla_hours: Number(row.querySelector('.rl-sla').value),
+    };
+    t.disabled = true; t.textContent = '保存中…';
+    const r = await api(`/v1/rules/${encodeURIComponent(rid)}`, {method:'PUT', body:JSON.stringify(body)});
+    t.disabled = false; t.textContent = '保存';
+    toast(r && r.rule_id ? `规则 ${rid} 已更新（阈值 ${r.threshold}）` : '保存失败：' + ((r && r.detail) || '未知'));
+    renderRules();
     return;
   }
   if(t.dataset.ins){
@@ -1577,6 +1752,46 @@ function applyTheme(t){
 applyTheme(localStorage.getItem(THEME_KEY) || 'light');
 $('btn-theme').onclick = ()=>{
   applyTheme(document.body.classList.contains('dark') ? 'light' : 'dark');
+};
+
+
+/* ---------- 备件 / 知识库 / 工单执行 / 规则 交互 ---------- */
+$('seg-sp').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  [...$('seg-sp').children].forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); SP.low = b.dataset.l === '1'; renderSpares();
+});
+$('sp-q').addEventListener('input', e=>{
+  clearTimeout(window.__spqT);
+  window.__spqT = setTimeout(()=>{ SP.q = e.target.value.trim(); renderSpares(); }, 300);
+});
+$('kb-q').addEventListener('input', e=>{
+  clearTimeout(window.__kbqT);
+  window.__kbqT = setTimeout(()=>{ KB.q = e.target.value.trim(); renderKnowledge(); }, 300);
+});
+$('btn-kb-new').onclick = async ()=>{
+  const title = prompt('案例标题（必填）：');
+  if(!title) return;
+  const r = await api('/v1/knowledge', {method:'POST', body:JSON.stringify({
+    title, symptom: prompt('故障现象：') || '', root_cause: prompt('根因：') || '',
+    resolution: prompt('处理措施：') || '', tags: prompt('标签（逗号分隔）：') || '',
+  })});
+  if(r && r.case_id){ toast('案例已创建：' + r.case_id); renderKnowledge(); }
+  else{ toast('创建失败：' + ((r && (r.detail || r._raw)) || '未知错误')); }
+};
+$('btn-wl-submit').onclick = async ()=>{
+  const card = $('wl-card').value.trim();
+  if(!card){ toast('请填写方案卡号'); return; }
+  if(!canDo('card.confirm')){ toast('当前角色无 card.confirm 权限，请用主管账号登录'); return; }
+  const cost = $('wl-cost').value.trim();
+  const btn = $('btn-wl-submit'); btn.disabled = true; btn.textContent = '提交中…';
+  const r = await api('/v1/worklogs', {method:'POST', body:JSON.stringify({
+    card_id: card, action: $('wl-action').value, note: $('wl-note').value.trim(),
+    actual_cost: cost ? Number(cost) : null,
+  })});
+  btn.disabled = false; btn.textContent = '提交';
+  if(r && r.action){ toast(`已记录：${card} ${r.action}`); $('wl-note').value=''; renderWorklogs(); }
+  else{ toast('提交失败：' + ((r && (r.detail || r._raw)) || '未知错误')); }
 };
 
 /* ---------- 登录 / 登出 ---------- */
@@ -2336,6 +2551,182 @@ async function renderPlans(){
       <td style="text-align:right"><button class="btn sm" data-asset360="${p.asset_id}">设备</button></td>
     </tr>`;
   }).join('');
+}
+
+
+/* =====================================================================
+   备件 / 知识库 / 工单执行 / 告警规则（docs/36 模块 #6 #9 #11 #14）
+   ===================================================================== */
+
+/* ---------- 备件管理 ---------- */
+const SP = {q:'', low:false};
+async function renderSpares(){
+  const q = new URLSearchParams();
+  if(SP.low) q.set('low_only','true');
+  const [list, issues] = await Promise.all([
+    api('/v1/spares?' + q.toString()),
+    api('/v1/spares/issues?limit=50'),
+  ]);
+  let rows = (list && list.items) || [];
+  if(SP.q){
+    const k = SP.q.toUpperCase();
+    rows = rows.filter(r => (r.part_code + (r.name||'')).toUpperCase().includes(k));
+  }
+  const low = (list && list.low_count) || 0;
+  const totalValue = (list && list.total_value) || 0;
+
+  $('sp-kpis').innerHTML = `
+    <div class="kpi"><div class="l">备件种类</div><div class="v">${(list && list.count) || 0}</div>
+      <div class="d">在库 SKU</div></div>
+    <div class="kpi c"><div class="l">库存金额</div>
+      <div class="v" style="font-size:24px">${money(totalValue)}</div>
+      <div class="d">元 · 按单价×库存</div></div>
+    <div class="kpi ${low ? 'r' : 'g'}"><div class="l">低库存</div><div class="v">${low}</div>
+      <div class="d">${low ? '需补库' : '全部高于安全库存'}</div></div>
+    <div class="kpi"><div class="l">领用记录</div><div class="v">${(issues && issues.count) || 0}</div>
+      <div class="d">最近 50 条</div></div>`;
+
+  $('sp-count').textContent = `${rows.length} 条`;
+  $('sp-rows').innerHTML = rows.length ? rows.map(r=>`
+    <tr>
+      <td class="mono" style="font-size:11.5px">${r.part_code}</td>
+      <td style="font-size:12.5px">${r.name||'—'}</td>
+      <td style="font-size:12px;color:var(--txt-3)">${r.spec||'—'}</td>
+      <td style="font-size:12px;color:var(--txt-3)">${r.location||'—'}</td>
+      <td class="mono" style="font-weight:600;color:${r.is_low ? 'var(--red)' : 'var(--txt)'}">${r.stock}<em style="font-size:10.5px;color:var(--txt-3);font-style:normal;margin-left:2px">${r.unit||''}</em></td>
+      <td class="mono" style="color:var(--txt-3)">${r.safety_stock}</td>
+      <td class="mono" style="font-size:12px">${Number(r.unit_price).toFixed(2)}</td>
+      <td class="mono" style="font-size:12px">${money(r.stock_value)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn sm" data-issue="${r.part_code}">领用 1</button>
+        <button class="btn sm" data-restock="${r.part_code}">入库 10</button>
+      </td></tr>`).join('') : `<tr><td colspan="9">${emptyBox('没有匹配的备件','清空筛选再试。')}</td></tr>`;
+
+  const iss = (issues && issues.items) || [];
+  $('sp-issue-sub').textContent = `${iss.length} 条`;
+  $('sp-issue-rows').innerHTML = iss.length ? iss.map(i=>`
+    <tr>
+      <td class="mono" style="font-size:11.5px">${i.issue_id}</td>
+      <td class="mono" style="font-size:11.5px">${i.part_code}</td>
+      <td class="mono" style="font-weight:600">${i.qty}</td>
+      <td class="mono" style="font-size:11.5px;color:var(--txt-3)">${i.card_id||'—'}</td>
+      <td class="mono" style="font-size:11.5px">${i.asset_id||'—'}</td>
+      <td style="font-size:12px">${i.issued_by}</td>
+      <td class="mono" style="font-size:12px;color:var(--txt-3)">${dtStr(i.created_at)}</td>
+    </tr>`).join('') : `<tr><td colspan="7">${emptyBox('暂无领用记录','在备件列表点「领用」后生成。')}</td></tr>`;
+}
+
+/* ---------- 知识库 ---------- */
+const KB = {q:''};
+async function renderKnowledge(){
+  const q = new URLSearchParams();
+  if(KB.q) q.set('q', KB.q);
+  const r = await api('/v1/knowledge?' + q.toString());
+  const rows = (r && r.items) || [];
+  const all = await api('/v1/knowledge?limit=200');
+  const tags = {};
+  ((all && all.items) || []).forEach(c=>(c.tags||'').split(',').forEach(t=>{
+    const k=t.trim(); if(k) tags[k]=(tags[k]||0)+1; }));
+
+  $('kb-kpis').innerHTML = `
+    <div class="kpi c"><div class="l">案例总数</div><div class="v">${(all && all.count) || 0}</div>
+      <div class="d">故障处置经验沉淀</div></div>
+    <div class="kpi"><div class="l">命中</div><div class="v">${rows.length}</div>
+      <div class="d">${KB.q ? '按当前关键词' : '未筛选'}</div></div>
+    <div class="kpi"><div class="l">标签</div><div class="v">${Object.keys(tags).length}</div>
+      <div class="d">${Object.keys(tags).slice(0,3).join(' / ') || '—'}</div></div>`;
+
+  $('kb-count').textContent = `${rows.length} 条`;
+  $('kb-rows').innerHTML = rows.length ? rows.map(c=>`
+    <tr>
+      <td>
+        <div style="font-size:13px;font-weight:550;color:var(--txt)">${c.title}</div>
+        <div style="font-size:11.5px;color:var(--txt-3);margin-top:3px;max-width:420px">${c.symptom||''}</div>
+      </td>
+      <td><b class="mono" style="font-size:12px">${c.asset_id||'—'}</b></td>
+      <td style="max-width:220px;font-size:12px;color:var(--txt-2)">${c.root_cause||'—'}</td>
+      <td style="max-width:260px;font-size:12px;color:var(--txt-2)">${c.resolution||'—'}</td>
+      <td style="font-size:11.5px;color:var(--txt-3)">${c.tags||'—'}</td>
+      <td><span class="badge ${c.source==='diagnosis'?'crit c':'crit b'}">${c.source==='diagnosis'?'诊断沉淀':'人工录入'}</span></td>
+      <td style="text-align:right;white-space:nowrap">
+        ${c.asset_id ? `<button class="btn sm" data-asset360="${c.asset_id}">设备</button>` : ''}
+        ${canDo('card.confirm') ? `<button class="btn sm" data-delcase="${c.case_id}">删除</button>` : ''}
+      </td></tr>`).join('') : `<tr><td colspan="7">${emptyBox('没有匹配的案例','换个关键词，或点「新增案例」录入经验。','<circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"M16.5 16.5L21 21\"/>')}</td></tr>`;
+}
+
+/* ---------- 工单执行 ---------- */
+async function renderWorklogs(){
+  const [logs, cards] = await Promise.all([
+    api('/v1/worklogs?limit=200'),
+    api('/v1/cards?limit=50'),
+  ]);
+  const items = (logs && logs.items) || [];
+  const byAction = {};
+  items.forEach(i=>{ byAction[i.action] = (byAction[i.action]||0)+1; });
+  const closedCards = (cards && cards.cards || []).filter(c=>c.status==='CONFIRMED').length;
+
+  $('wl-kpis').innerHTML = `
+    <div class="kpi"><div class="l">执行记录</div><div class="v">${items.length}</div>
+      <div class="d">最近 200 条</div></div>
+    <div class="kpi c"><div class="l">已确认工单</div><div class="v">${closedCards}</div>
+      <div class="d">可进入执行跟踪</div></div>
+    <div class="kpi g"><div class="l">已关闭</div><div class="v">${byAction.CLOSED||0}</div>
+      <div class="d">闭环完成</div></div>
+    <div class="kpi o"><div class="l">执行中</div><div class="v">${(byAction.STARTED||0)}</div>
+      <div class="d">已派工/已开始</div></div>`;
+
+  $('wl-sub').textContent = `${items.length} 条`;
+  $('wl-rows').innerHTML = items.length ? items.map(i=>`
+    <tr>
+      <td class="mono" style="font-size:12px;white-space:nowrap">${dtStr(i.created_at)}</td>
+      <td class="mono" style="font-size:11.5px;color:var(--accent)">${i.card_id}</td>
+      <td><span class="badge ${i.action==='CLOSED'?'ok':(i.action==='COMPLETED'?'mon':'act')}">${i.action_label||i.action}</span></td>
+      <td style="font-size:12.5px">${i.actor}</td>
+      <td class="mono">${i.actual_cost!=null ? Number(i.actual_cost).toFixed(2) : '—'}</td>
+      <td style="font-size:12px;color:var(--txt-2);max-width:280px">${i.note||'—'}</td>
+    </tr>`).join('') : `<tr><td colspan="6">${emptyBox('暂无执行记录','填写上方表单记录第一条。')}</td></tr>`;
+}
+
+/* ---------- 告警规则 ---------- */
+async function renderRules(){
+  const r = await api('/v1/rules');
+  const rows = (r && r.items) || [];
+  const enabled = rows.filter(x=>x.enabled).length;
+
+  $('rl-kpis').innerHTML = `
+    <div class="kpi"><div class="l">规则数</div><div class="v">${rows.length}</div>
+      <div class="d">已启用 ${enabled}</div></div>
+    <div class="kpi r"><div class="l">红色级</div><div class="v">${rows.filter(x=>x.level==='red'&&x.enabled).length}</div>
+      <div class="d">立即处置</div></div>
+    <div class="kpi o"><div class="l">橙色级</div><div class="v">${rows.filter(x=>x.level==='orange'&&x.enabled).length}</div>
+      <div class="d">计划检修</div></div>
+    <div class="kpi"><div class="l">最短 SLA</div>
+      <div class="v">${rows.filter(x=>x.enabled).length ? Math.min(...rows.filter(x=>x.enabled).map(x=>x.sla_hours)) : '—'}</div>
+      <div class="d">小时</div></div>`;
+
+  const opCn = {lt:'<',lte:'≤',gt:'>',gte:'≥'};
+  const lvCls = {red:'act', orange:'mon'};
+  $('rl-rows').innerHTML = rows.length ? rows.map(x=>`
+    <tr>
+      <td class="mono" style="font-size:11.5px">${x.rule_id}</td>
+      <td style="font-size:12.5px">${x.name}</td>
+      <td class="mono" style="font-size:11.5px;color:var(--txt-3)">${x.metric}</td>
+      <td class="mono" style="text-align:center">${opCn[x.op]||x.op}</td>
+      <td><input class="rl-th" data-rid="${x.rule_id}" value="${x.threshold}"
+        style="width:88px;height:30px;border:1px solid var(--line);border-radius:8px;padding:0 9px;
+        font-family:var(--f-num);font-size:12.5px;background:var(--panel)"></td>
+      <td><select class="rl-lv" data-rid="${x.rule_id}" style="height:30px;border:1px solid var(--line);
+        border-radius:8px;padding:0 8px;font-family:inherit;font-size:12.5px;background:var(--panel)">
+        <option value="red" ${x.level==='red'?'selected':''}>红色</option>
+        <option value="orange" ${x.level==='orange'?'selected':''}>橙色</option>
+      </select></td>
+      <td><input class="rl-sla" data-rid="${x.rule_id}" value="${x.sla_hours}" type="number"
+        style="width:70px;height:30px;border:1px solid var(--line);border-radius:8px;padding:0 9px;
+        font-family:var(--f-num);font-size:12.5px;background:var(--panel)"></td>
+      <td><span class="badge ${x.enabled?'ok':'none'}">${x.enabled?'启用':'停用'}</span></td>
+      <td style="text-align:right;white-space:nowrap">
+        ${canDo('plan.approve') ? `<button class="btn sm pri" data-saverule="${x.rule_id}">保存</button>` : ''}
+      </td></tr>`).join('') : `<tr><td colspan="9">${emptyBox('暂无规则','调用 PUT /v1/rules/{id} 新建。')}</td></tr>`;
 }
 
 /* ===== 启动 =====

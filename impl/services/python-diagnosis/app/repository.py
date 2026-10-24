@@ -445,14 +445,21 @@ def sync_alerts(tenant_id: str, threshold_hi: float = 70.0,
     幂等键：同一 (asset_id, rule_id) 存在 OPEN/ACKED/ESCALATED 时不重复建单。
     只对已有健康评估的设备建告警——没有 HI 就没有判断依据，不臆造。
     """
+    # 阈值来自 alert_rule 表（可配置），不再硬编码 70/40。
+    # 规则表为空时退回调用方传入的 threshold_hi，行为不中断。
+    rules = hi_rules(tenant_id)
+    if not rules:
+        rules = [{"rule_id": "HI_WARNING", "op": "lt", "threshold": threshold_hi,
+                  "level": "orange", "owner_role": "maintenance_supervisor",
+                  "sla_hours": 24}]
+
     rows = (
         TenantQueryBuilder(tenant_id)
         .query(
-            # 列名是 updated_at（不是 ts）；rul_p50_days 为剩余寿命中位数
             "SELECT asset_id, hi, level, rul_p50_days, updated_at FROM read_asset_health "
             "WHERE tenant_id=%s AND hi IS NOT NULL AND hi < %s "
             "ORDER BY hi ASC LIMIT %s",
-            threshold_hi, limit,
+            max(float(r["threshold"]) for r in rules), limit,
         )
         .fetchall()
     )
@@ -463,14 +470,17 @@ def sync_alerts(tenant_id: str, threshold_hi: float = 70.0,
     with connect() as conn, conn.cursor() as cur:
         for r in rows:
             hi = float(r["hi"])
-            if hi < 40:
-                rule, lv, role, sla = _ALERT_RULES[0]
-                msg = f"{r['asset_id']} 健康指数 {hi:.1f}，低于临界阈值 40"
-                hint = "立即停机检查，按方案卡执行紧急维修"
-            else:
-                rule, lv, role, sla = _ALERT_RULES[1]
-                msg = f"{r['asset_id']} 健康指数 {hi:.1f}，低于关注阈值 {threshold_hi:.0f}"
-                hint = "安排计划检修窗口，检查振动与轴承状态"
+            hit = next((x for x in rules
+                        if _OPS[x.get("op", "lt")](hi, float(x["threshold"]))), None)
+            if hit is None:
+                continue
+            rule, lv = hit["rule_id"], hit["level"]
+            role = hit.get("owner_role") or "maintenance_supervisor"
+            sla = int(hit.get("sla_hours") or 24)
+            msg = (f"{r['asset_id']} 健康指数 {hi:.1f}，"
+                   f"触发规则 {rule}（阈值 {float(hit['threshold']):g}）")
+            hint = ("立即停机检查，按方案卡执行紧急维修" if lv == "red"
+                    else "安排计划检修窗口，检查振动与轴承状态")
 
             cur.execute(
                 "SELECT alert_id FROM alert WHERE tenant_id=%s AND asset_id=%s "
@@ -1183,3 +1193,241 @@ def inspection_stats(tenant_id: str) -> dict[str, Any]:
         "completion_pct": round(100 * done / (done + by_status.get("PENDING", 0)), 1)
                           if (done + by_status.get("PENDING", 0)) else 0.0,
     }
+
+
+def list_asset_ids(tenant_id: str, prefix: str = "", limit: int = 2000) -> list[str]:
+    """租户下在监设备位号（批量诊断用）。
+
+    直接读 asset 表：诊断所需五维指标从 asset_metric_snapshot 兜底补全，
+    不需要外部调用方传入。
+    """
+    sql = "SELECT asset_id FROM asset WHERE tenant_id=%s"
+    params: list[Any] = []
+    if prefix:
+        sql += " AND asset_id LIKE %s"
+        params.append(f"{prefix}%")
+    sql += " ORDER BY asset_id LIMIT %s"
+    params.append(limit)
+    return [r["asset_id"] for r in TenantQueryBuilder(tenant_id).query(sql, *params).fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# 总览统计（区分「在监」与「已评估」）
+# ---------------------------------------------------------------------------
+def overview_stats(tenant_id: str) -> dict[str, Any]:
+    """在监设备总数与已评估覆盖度。
+
+    为什么需要这个接口：前端原先用 list_hot_assets(limit=200) 的长度当
+    "在监设备"，把展示上限当成了业务总量——库里有 1200 台，页面显示 200。
+    已评估数来自 read_asset_health（诊断落库后的读模型）。
+    """
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM asset WHERE tenant_id=%s", (tenant_id,))
+        total = int(cur.fetchone()["n"] or 0)
+
+        # 必须 JOIN asset：read_asset_health 可能残留已删除设备的孤儿行
+        # （实测 assessed 1204 > total 1200，覆盖率算出 100.3%）
+        cur.execute(
+            "SELECT h.level AS level, COUNT(*) AS n FROM read_asset_health h "
+            "JOIN asset a ON a.tenant_id = h.tenant_id AND a.asset_id = h.asset_id "
+            "WHERE h.tenant_id=%s GROUP BY h.level", (tenant_id,))
+        by_level = {"red": 0, "orange": 0, "yellow": 0, "green": 0}
+        for r in cur.fetchall():
+            lv = r["level"] or "green"
+            by_level[lv if lv in by_level else "green"] += int(r["n"])
+        assessed = sum(by_level.values())
+
+    return {
+        "total_assets": total,
+        "assessed": assessed,
+        "unassessed": max(0, total - assessed),
+        "coverage_pct": round(100 * assessed / total, 1) if total else 0.0,
+        "by_level": by_level,
+    }
+
+
+def decimal_module():
+    import decimal
+    return decimal
+
+
+# ---------------------------------------------------------------------------
+# 工单执行跟踪（docs/36 模块 #6）
+# ---------------------------------------------------------------------------
+WO_ACTIONS = ("ASSIGNED", "STARTED", "COMPLETED", "ACCEPTED", "CLOSED")
+WO_ACTION_LABELS = {
+    "ASSIGNED": "已派工", "STARTED": "开始执行", "COMPLETED": "执行完成",
+    "ACCEPTED": "已验收", "CLOSED": "已关闭",
+}
+
+
+def append_work_log(tenant_id: str, card_id: str, action: str, actor: str,
+                    note: str = "", actual_cost: float | None = None) -> dict[str, Any]:
+    if action not in WO_ACTIONS:
+        raise ValueError(f"invalid action: {action}")
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO work_order_log(tenant_id,card_id,action,actor,note,actual_cost,created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (tenant_id, card_id, action, actor, note[:255], actual_cost,
+             datetime.datetime.now()),
+        )
+    return {"card_id": card_id, "action": action, "actor": actor}
+
+
+def list_work_logs(tenant_id: str, card_id: str = "",
+                   limit: int = 200) -> list[dict[str, Any]]:
+    sql = ("SELECT card_id, action, actor, note, actual_cost, created_at "
+           "FROM work_order_log WHERE tenant_id=%s")
+    params: list[Any] = []
+    if card_id:
+        sql += " AND card_id=%s"
+        params.append(card_id)
+    sql += " ORDER BY created_at DESC LIMIT %s"
+    params.append(limit)
+    rows = list(TenantQueryBuilder(tenant_id).query(sql, *params).fetchall())
+    for r in rows:
+        r["action_label"] = WO_ACTION_LABELS.get(r["action"], r["action"])
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# 备件管理（docs/36 模块 #9）
+# ---------------------------------------------------------------------------
+def list_spares(tenant_id: str, low_only: bool = False) -> list[dict[str, Any]]:
+    rows = list(
+        TenantQueryBuilder(tenant_id)
+        .query("SELECT part_code,name,spec,unit,stock,safety_stock,unit_price,location "
+               "FROM spare_part WHERE tenant_id=%s ORDER BY part_code")
+        .fetchall()
+    )
+    for r in rows:
+        r["is_low"] = int(r["stock"] or 0) <= int(r["safety_stock"] or 0)
+        r["stock_value"] = round(float(r["stock"] or 0) * float(r["unit_price"] or 0), 2)
+    return [r for r in rows if (r["is_low"] or not low_only)]
+
+
+def move_spare(tenant_id: str, part_code: str, delta: int, actor: str,
+               card_id: str = "", asset_id: str = "", note: str = "") -> dict[str, Any]:
+    """入库（delta>0）或领用（delta<0）。库存不允许为负。"""
+    if delta == 0:
+        raise ValueError("delta must not be 0")
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT stock FROM spare_part WHERE tenant_id=%s AND part_code=%s",
+                    (tenant_id, part_code))
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"part not found: {part_code}")
+        new_stock = int(row["stock"] or 0) + int(delta)
+        if new_stock < 0:
+            raise ValueError(f"库存不足：当前 {row['stock']}，需 {-int(delta)}")
+        cur.execute("UPDATE spare_part SET stock=%s WHERE tenant_id=%s AND part_code=%s",
+                    (new_stock, tenant_id, part_code))
+        issue_id = f"SP-{datetime.datetime.now():%Y%m%d}-{os.urandom(3).hex().upper()}"
+        cur.execute(
+            "INSERT INTO spare_issue(tenant_id,issue_id,part_code,qty,card_id,asset_id,"
+            "issued_by,note,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (tenant_id, issue_id, part_code, abs(int(delta)), card_id or None,
+             asset_id or None, actor, note[:255], datetime.datetime.now()),
+        )
+    return {"part_code": part_code, "stock": new_stock, "issue_id": issue_id}
+
+
+def list_spare_issues(tenant_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    rows = list(
+        TenantQueryBuilder(tenant_id)
+        .query("SELECT issue_id, part_code, qty, card_id, asset_id, issued_by, note, created_at "
+               "FROM spare_issue WHERE tenant_id=%s ORDER BY created_at DESC LIMIT %s",
+               limit)
+        .fetchall()
+    )
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# 知识库（docs/36 模块 #11）
+# ---------------------------------------------------------------------------
+def list_cases(tenant_id: str, q: str = "", limit: int = 100) -> list[dict[str, Any]]:
+    sql = ("SELECT case_id, asset_id, title, symptom, root_cause, resolution, "
+           "source, tags, created_by, created_at FROM knowledge_case WHERE tenant_id=%s")
+    params: list[Any] = []
+    if q:
+        sql += " AND (title LIKE %s OR root_cause LIKE %s OR tags LIKE %s OR asset_id LIKE %s)"
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+    sql += " ORDER BY created_at DESC LIMIT %s"
+    params.append(limit)
+    return list(TenantQueryBuilder(tenant_id).query(sql, *params).fetchall())
+
+
+def create_case(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise ValueError("title required")
+    case_id = f"KC-{datetime.datetime.now():%Y%m%d}-{os.urandom(3).hex().upper()}"
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO knowledge_case(tenant_id,case_id,asset_id,title,symptom,root_cause,"
+            "resolution,source,tags,created_by,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (tenant_id, case_id, payload.get("asset_id") or None, title,
+             payload.get("symptom") or None, payload.get("root_cause") or None,
+             payload.get("resolution") or None, payload.get("source") or "manual",
+             payload.get("tags") or None, payload.get("created_by") or "console",
+             datetime.datetime.now()),
+        )
+    return {"case_id": case_id, "title": title}
+
+
+# ---------------------------------------------------------------------------
+# 告警规则可配置（docs/36 模块 #14，替代硬编码 70/40）
+# ---------------------------------------------------------------------------
+_OPS = {"lt": lambda a, b: a < b, "lte": lambda a, b: a <= b,
+        "gt": lambda a, b: a > b, "gte": lambda a, b: a >= b}
+
+
+def list_alert_rules(tenant_id: str) -> list[dict[str, Any]]:
+    rows = list(
+        TenantQueryBuilder(tenant_id)
+        .query("SELECT rule_id,name,metric,op,threshold,level,owner_role,sla_hours,enabled,note "
+               "FROM alert_rule WHERE tenant_id=%s ORDER BY rule_id")
+        .fetchall()
+    )
+    for r in rows:
+        if isinstance(r.get("threshold"), decimal_module().Decimal):
+            r["threshold"] = float(r["threshold"])
+    return rows
+
+
+def upsert_alert_rule(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    rid = str(payload.get("rule_id") or "").strip()
+    if not rid:
+        raise ValueError("rule_id required")
+    op = str(payload.get("op") or "lt")
+    if op not in _OPS:
+        raise ValueError(f"invalid op: {op}")
+    metric = str(payload.get("metric") or "hi")
+    threshold = float(payload.get("threshold"))
+    level = str(payload.get("level") or "orange")
+    sla = int(payload.get("sla_hours") or 24)
+    enabled = 1 if payload.get("enabled", True) else 0
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO alert_rule(tenant_id,rule_id,name,metric,op,threshold,level,owner_role,"
+            "sla_hours,enabled,note,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE name=VALUES(name),metric=VALUES(metric),op=VALUES(op),"
+            "threshold=VALUES(threshold),level=VALUES(level),sla_hours=VALUES(sla_hours),"
+            "enabled=VALUES(enabled),note=VALUES(note)",
+            (tenant_id, rid, str(payload.get("name") or rid), metric, op, threshold, level,
+             str(payload.get("owner_role") or "maintenance_supervisor"), sla, enabled,
+             payload.get("note"), datetime.datetime.now()),
+        )
+    return {"rule_id": rid, "metric": metric, "op": op, "threshold": threshold,
+            "level": level, "sla_hours": sla, "enabled": bool(enabled)}
+
+
+def hi_rules(tenant_id: str) -> list[dict[str, Any]]:
+    """取启用的 HI 类规则，按阈值降序（先匹配最严的）。"""
+    rules = [r for r in list_alert_rules(tenant_id)
+             if r["metric"] == "hi" and r["enabled"]]
+    rules.sort(key=lambda r: float(r["threshold"]), reverse=True)
+    return rules

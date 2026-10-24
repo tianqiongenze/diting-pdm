@@ -1,8 +1,8 @@
 {
-  "time": "2026-10-24T08:02:08",
-  "duration_s": 118.5,
-  "total": 143,
-  "passed": 143,
+  "time": "2026-10-24T10:24:27",
+  "duration_s": 138.8,
+  "total": 178,
+  "passed": 178,
   "failed": 0,
   "failures": [],
   "results": [
@@ -54,7 +54,7 @@
     {
       "name": "A1.3 KPI 已填充数值",
       "pass": true,
-      "detail": "{\"k-assets\": \"20\", \"k-cards\": \"8\", \"k-red\": \"1\", \"k-orange\": \"0\", \"k-yellow\": \"1\", \"k-transport\": \"pulsar\"}"
+      "detail": "{\"k-assets\": \"20\", \"k-cards\": \"12\", \"k-red\": \"20\", \"k-orange\": \"0\", \"k-yellow\": \"0\", \"k-transport\": \"pulsar\"}"
     },
     {
       "name": "A1.4 热点设备表有数据行",
@@ -99,7 +99,7 @@
     {
       "name": "A3.4 趋势说明已更新",
       "pass": true,
-      "detail": "AGV-00006 · 280 点（原始 280 行，抽样步长 1）"
+      "detail": "FAN-02260 · 7 点（原始 7 行，抽样步长 1）"
     },
     {
       "name": "A4.1 找到会诊按钮",
@@ -109,7 +109,7 @@
     {
       "name": "A4.2 方案卡已生成",
       "pass": true,
-      "detail": "REC-20261023-779183\tFAN-00004\t健康指数 0.0（red），主要贡献 imp\tACT_NOW\t高\t已确认\t REC-20261023-01BDF8\tAG"
+      "detail": "REC-20261024-9D3E49\tFAN-02260\t健康指数 0.0（red），主要贡献 imp\tACT_NOW\t中\t待确认\t确认 REC-20261024-629EFF\t"
     },
     {
       "name": "A5.1 无 JS 运行时异常",
@@ -139,7 +139,7 @@
     {
       "name": "D1.2 环形图已绘制",
       "pass": true,
-      "detail": "3 段弧"
+      "detail": "5 段弧"
     },
     {
       "name": "D1.3 四级图例齐全",
@@ -159,12 +159,12 @@
     {
       "name": "D1.6 事件流有内容",
       "pass": true,
-      "detail": "4 条"
+      "detail": "6 条"
     },
     {
       "name": "D1.7 告警滚动条",
       "pass": true,
-      "detail": "2 项"
+      "detail": "24 项"
     },
     {
       "name": "D1.8 SVG 图表 ≥2 类",
@@ -259,7 +259,7 @@
     {
       "name": "E1.2 告警列表有数据",
       "pass": true,
-      "detail": "5 行"
+      "detail": "200 行"
     },
     {
       "name": "E1.3 SLA 列有值",
@@ -269,12 +269,17 @@
     {
       "name": "E1.4 按等级筛选生效",
       "pass": true,
-      "detail": "红 3 / 全部 5"
+      "detail": "红 200 / 全部 200"
+    },
+    {
+      "name": "E2.0 登录取 token（写操作前置）",
+      "pass": true,
+      "detail": "HTTP 200"
     },
     {
       "name": "E2.1 告警同步首次",
       "pass": true,
-      "detail": "{\"tenant_id\": \"site-a\", \"threshold_hi\": 70.0, \"created\": 0, \"skipped\": 4, \"total"
+      "detail": "{\"tenant_id\": \"site-a\", \"threshold_hi\": 70.0, \"created\": 0, \"skipped\": 200, \"tot"
     },
     {
       "name": "E2.2 告警同步幂等",
@@ -289,7 +294,7 @@
     {
       "name": "E2.4 告警含 SLA 字段",
       "pass": true,
-      "detail": "-6.7h overdue=True"
+      "detail": "23.1h overdue=False"
     },
     {
       "name": "E2.5 诊断历史接口",
@@ -304,17 +309,17 @@
     {
       "name": "E2.7 成本接口",
       "pass": true,
-      "detail": "net=801600.0 roi=228.8%"
+      "detail": "net=1202400.0 roi=228.8%"
     },
     {
       "name": "E2.8 成本口径一致（构成和=总成本）",
       "pass": true,
-      "detail": "350400.0 vs 350400.0"
+      "detail": "525600.0 vs 525600.0"
     },
     {
       "name": "E2.9 净收益=避免损失-总成本",
       "pass": true,
-      "detail": "801600.0"
+      "detail": "1202400.0"
     },
     {
       "name": "E2.10 组织树接口",
@@ -339,12 +344,12 @@
     {
       "name": "E2.14 告警确认流转",
       "pass": true,
-      "detail": "{'alert_id': 'ALT-20261023-6534D6', 'status': 'ACKED', 'by': 'e2e'}"
+      "detail": "{'alert_id': 'ALT-20261024-05E535', 'status': 'ACKED', 'by': 'admin'}"
     },
     {
       "name": "E2.15 告警升级流转",
       "pass": true,
-      "detail": "{'alert_id': 'ALT-20261023-6534D6', 'status': 'ESCALATED', 'by': 'e2e'"
+      "detail": "{'alert_id': 'ALT-20261024-05E535', 'status': 'ESCALATED', 'by': 'admi"
     },
     {
       "name": "E2.16 不存在告警返回 404",
@@ -354,7 +359,7 @@
     {
       "name": "E3.1 设备 360 标题",
       "pass": true,
-      "detail": "FAN-00004 · FAN设备4"
+      "detail": "FAN-00004"
     },
     {
       "name": "E3.2 设备 360 基础信息",
@@ -379,7 +384,7 @@
     {
       "name": "E3.6 诊断历史搜索",
       "pass": true,
-      "detail": "过滤后 27 行"
+      "detail": "过滤后 39 行"
     },
     {
       "name": "E3.7 成本 KPI",
@@ -394,7 +399,7 @@
     {
       "name": "E3.9 净收益排行",
       "pass": true,
-      "detail": "2 条"
+      "detail": "3 条"
     },
     {
       "name": "E3.10 方案对比表",
@@ -459,7 +464,7 @@
     {
       "name": "F1.6 主管可查用户",
       "pass": true,
-      "detail": "count=3"
+      "detail": "count=4"
     },
     {
       "name": "F1.7 值班员登录",
@@ -489,7 +494,7 @@
     {
       "name": "F2.4 任务含检查项与逾期标记",
       "pass": true,
-      "detail": "3 项 overdue=True"
+      "detail": "3 项 overdue=False"
     },
     {
       "name": "F2.5 值班员无 plan.edit 被拒",
@@ -509,7 +514,7 @@
     {
       "name": "F2.8 点检汇总字段齐全",
       "pass": true,
-      "detail": "待执行56 逾期24 计划1200"
+      "detail": "待执行49 逾期17 计划1200"
     },
     {
       "name": "F2.9 不存在任务 404",
@@ -539,7 +544,7 @@
     {
       "name": "F3.5 提交后状态变已完成",
       "pass": true,
-      "detail": "5 行已完成"
+      "detail": "12 行已完成"
     },
     {
       "name": "F3.6 保养计划 KPI",
@@ -554,7 +559,7 @@
     {
       "name": "F3.8 逾期筛选生效",
       "pass": true,
-      "detail": "逾期 23 / 全部 300"
+      "detail": "逾期 16 / 全部 300"
     },
     {
       "name": "F3.9 登录后显示身份",
@@ -574,12 +579,12 @@
     {
       "name": "F3.12 告警确认按钮可点击（点击委托回归）",
       "pass": true,
-      "detail": "告警 ALT-20261023-6534D6 → ACKED"
+      "detail": "告警 ALT-20261024-FF98FC → ACKED"
     },
     {
       "name": "F3.13 诊断历史可跳设备 360",
       "pass": true,
-      "detail": "#/asset/FAN-00004 · FAN-00004 · FAN设备4"
+      "detail": "#/asset/PRE-02368 · PRE-02368"
     },
     {
       "name": "F3.16 主题切换生效",
@@ -607,6 +612,171 @@
       "detail": ""
     },
     {
+      "name": "G1.1 登录取 token",
+      "pass": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "G1.2 总览覆盖度 100%",
+      "pass": true,
+      "detail": "在监 1200 已评估 1200 (100.0%)"
+    },
+    {
+      "name": "G1.3 已评估不超过在监",
+      "pass": true,
+      "detail": "1200 ≤ 1200"
+    },
+    {
+      "name": "G1.4 四级分布齐全",
+      "pass": true,
+      "detail": "{'red': 219, 'orange': 20, 'yellow': 631, 'green': 330}"
+    },
+    {
+      "name": "G1.5 批量诊断（限量）",
+      "pass": true,
+      "detail": "total=20 ok=20 failed=0 3351ms"
+    },
+    {
+      "name": "G1.6 批量诊断无失败",
+      "pass": true,
+      "detail": "[]"
+    },
+    {
+      "name": "G1.7 批量诊断需登录",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "G2.1 记录派工",
+      "pass": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "G2.2 记录开始并带成本",
+      "pass": true,
+      "detail": "{'card_id': 'REC-20261024-9D3E49', 'action': 'STARTED', 'act"
+    },
+    {
+      "name": "G2.3 非法动作 400",
+      "pass": true,
+      "detail": "HTTP 400"
+    },
+    {
+      "name": "G2.4 按卡号查流水",
+      "pass": true,
+      "detail": "4 条"
+    },
+    {
+      "name": "G2.5 流水含中文动作名",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "G2.6 工单日志需登录",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "G3.1 备件列表",
+      "pass": true,
+      "detail": "12 种，低库存 0，金额 27817.4"
+    },
+    {
+      "name": "G3.2 低库存标记正确",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "G3.3 低库存筛选",
+      "pass": true,
+      "detail": "0 条"
+    },
+    {
+      "name": "G3.4 领用扣减库存",
+      "pass": true,
+      "detail": "3 → 2"
+    },
+    {
+      "name": "G3.5 入库恢复库存",
+      "pass": true,
+      "detail": "→ 3"
+    },
+    {
+      "name": "G3.6 超领被拒（不允许负库存）",
+      "pass": true,
+      "detail": "库存不足：当前 3，需 99999"
+    },
+    {
+      "name": "G3.7 不存在备件 400",
+      "pass": true,
+      "detail": "HTTP 400"
+    },
+    {
+      "name": "G3.8 领用记录可查",
+      "pass": true,
+      "detail": "5 条"
+    },
+    {
+      "name": "G4.1 案例列表",
+      "pass": true,
+      "detail": "5 条"
+    },
+    {
+      "name": "G4.2 关键词检索",
+      "pass": true,
+      "detail": "命中 2"
+    },
+    {
+      "name": "G4.3 无命中返回空",
+      "pass": true,
+      "detail": "0 条"
+    },
+    {
+      "name": "G4.4 新增案例",
+      "pass": true,
+      "detail": "{'case_id': 'KC-20261024-1D0085', 'title': 'G 组回归案例'}"
+    },
+    {
+      "name": "G4.5 空标题 400",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "G5.1 规则列表",
+      "pass": true,
+      "detail": "5 条"
+    },
+    {
+      "name": "G5.2 阈值已从硬编码改为配置",
+      "pass": true,
+      "detail": "HI_WARNING 存在"
+    },
+    {
+      "name": "G5.3 主管可改阈值",
+      "pass": true,
+      "detail": "{'rule_id': 'HI_WARNING', 'metric': 'hi', 'op': 'lt', 'thres"
+    },
+    {
+      "name": "G5.4 值班员改阈值被拒",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "G5.5 阈值已还原",
+      "pass": true,
+      "detail": "HI_WARNING 回到 70"
+    },
+    {
+      "name": "G5.6 非法比较符 400",
+      "pass": true,
+      "detail": "HTTP 400"
+    },
+    {
+      "name": "G5.7 告警同步走规则表",
+      "pass": true,
+      "detail": "created=0 skipped=200"
+    },
+    {
       "name": "B1.1 /healthz",
       "pass": true,
       "detail": "{\"status\": \"ok\", \"service\": \"python-diagnosis\", \"version\": \"0.2.0\"}"
@@ -619,12 +789,12 @@
     {
       "name": "B1.3 /events/stats 传输层",
       "pass": true,
-      "detail": "{\"enabled\": true, \"transport\": \"pulsar\", \"emitted\": 0, \"failures\": 0, \"last_error\": null}"
+      "detail": "{\"enabled\": true, \"transport\": \"pulsar\", \"emitted\": 41, \"failures\": 0, \"last_error\": null}"
     },
     {
       "name": "B1.4 /integration/stats",
       "pass": true,
-      "detail": "{\"SENT\": 11}"
+      "detail": "{\"SENT\": 14}"
     },
     {
       "name": "B2.1 /v1/diagnose",
@@ -644,12 +814,12 @@
     {
       "name": "B2.4 诊断含 trace_id",
       "pass": true,
-      "detail": "ee95f93b-d891-489a-a710-b6dc0ffb4921"
+      "detail": "52dc24e8-078e-4b0f-8cfd-3ac6c75f1529"
     },
     {
       "name": "B3.1 /v1/consult 生成方案卡",
       "pass": true,
-      "detail": "REC-20261023-779183 verdict=ACT_NOW asset=FAN-00004"
+      "detail": "REC-20261024-E37BE7 verdict=ACT_NOW asset=FAN-00004"
     },
     {
       "name": "B3.2 /v1/cards 列表",
@@ -659,15 +829,20 @@
     {
       "name": "B3.1b 同设备再会诊复用同一卡（去重生效）",
       "pass": true,
-      "detail": "REC-20261023-779183 vs REC-20261023-779183"
+      "detail": "REC-20261024-E37BE7 vs REC-20261024-E37BE7"
     },
     {
-      "name": "B3.3 卡片已是终态（去重复用旧卡）",
+      "name": "B3.3.0 确认 maintenance_supervisor",
+      "pass": true,
+      "detail": "status=PENDING"
+    },
+    {
+      "name": "B3.3.1 确认 equipment_manager",
       "pass": true,
       "detail": "status=CONFIRMED"
     },
     {
-      "name": "B3.4 终态重复确认返回 409",
+      "name": "B3.4 重复确认返回 409",
       "pass": true,
       "detail": "HTTP 409"
     },
@@ -679,7 +854,7 @@
     {
       "name": "B4.1 /v1/assets/{id}/trend",
       "pass": true,
-      "detail": "points=16"
+      "detail": "points=27"
     },
     {
       "name": "B4.2 趋势缺租户头 400",
@@ -709,7 +884,7 @@
     {
       "name": "C1.3 关键度统计",
       "pass": true,
-      "detail": "{\"tenant_id\":\"site-a\",\"distribution\":[{\"criticality\":\"A\",\"n\":240},{\"criticality\":\"C\",\"n\":640},{\"crit"
+      "detail": "{\"tenant_id\":\"site-a\",\"distribution\":[{\"criticality\":\"A\",\"n\":240},{\"criticality\":\"B\",\"n\":320},{\"crit"
     },
     {
       "name": "C1.4 不存在资产 404",

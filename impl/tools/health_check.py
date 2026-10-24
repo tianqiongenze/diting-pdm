@@ -35,7 +35,7 @@ SERVER = "root@10.167.2.175"
 NS = "pdm-prod"
 INGRESS_HOST = "pdm-api.10.167.2.175.nip.io"
 BASE = "http://10.167.2.175:32231/pdm-api"
-AUTH = "pdmadmin:Diting2026!"
+AUTH = "pdmadmin:3r5P-ygrg-WAcK-W0yB-Vz1q"
 
 RESULTS: list[dict] = []
 

@@ -20,7 +20,7 @@ import uuid
 from typing import Any
 
 import msgspec
-from litestar import Litestar, Request, get, post
+from litestar import Litestar, Request, get, post, put
 from litestar.response import Response
 from litestar.exceptions import HTTPException
 from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND, HTTP_409_CONFLICT, HTTP_422_UNPROCESSABLE_ENTITY
@@ -470,6 +470,16 @@ async def submit_inspection_endpoint(request: Request, task_id: str) -> dict[str
         raise HTTPException(status_code=code, detail=msg) from exc
 
 
+@get("/v1/stats/overview")
+async def overview_stats_endpoint(request: Request) -> dict[str, Any]:
+    """总览：在监设备总数、已评估覆盖度、四级分布。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    data = await asyncio.to_thread(repository.overview_stats, tenant)
+    return {"tenant_id": tenant, **data}
+
+
 @get("/v1/stats/inspection")
 async def inspection_stats_endpoint(request: Request) -> dict[str, Any]:
     """点检与保养汇总。"""
@@ -478,6 +488,159 @@ async def inspection_stats_endpoint(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
     data = await asyncio.to_thread(repository.inspection_stats, tenant)
     return {"tenant_id": tenant, **data}
+
+
+# ---------- 工单执行跟踪 ----------
+@post("/v1/worklogs", status_code=201)
+async def append_worklog_endpoint(request: Request) -> dict[str, Any]:
+    """记录工单执行动作（派工/开始/完成/验收/关闭）。需 card.confirm 权限。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    ident = None
+    try:
+        ident = auth_mod.require(request.headers.get("X-Auth-Token"), "card.confirm")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    actor = (ident or {}).get("sub") or str(payload.get("actor") or "unknown")
+    try:
+        return await asyncio.to_thread(
+            repository.append_work_log, tenant, str(payload.get("card_id") or ""),
+            str(payload.get("action") or ""), actor, str(payload.get("note") or ""),
+            payload.get("actual_cost"))
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@get("/v1/worklogs")
+async def list_worklogs_endpoint(request: Request, card_id: str = "",
+                                 limit: int = 200) -> dict[str, Any]:
+    """工单执行流水。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    rows = await asyncio.to_thread(repository.list_work_logs, tenant, card_id, limit)
+    return {"tenant_id": tenant, "count": len(rows), "items": rows}
+
+
+# ---------- 备件管理 ----------
+@get("/v1/spares")
+async def list_spares_endpoint(request: Request, low_only: bool = False) -> dict[str, Any]:
+    """备件库存。low_only=true 只返回低于安全库存的。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    rows = await asyncio.to_thread(repository.list_spares, tenant, low_only)
+    low = [r for r in rows if r["is_low"]]
+    return {"tenant_id": tenant, "count": len(rows), "low_count": len(low),
+            "total_value": round(sum(r["stock_value"] for r in rows), 2), "items": rows}
+
+
+@post("/v1/spares/{part_code:str}/move", status_code=200)
+async def move_spare_endpoint(request: Request, part_code: str) -> dict[str, Any]:
+    """备件入库（delta>0，需 plan.edit）或领用（delta<0，需 card.confirm）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    delta = int(payload.get("delta") or 0)
+    if delta == 0:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="delta must not be 0")
+    perm = "plan.edit" if delta > 0 else "card.confirm"
+    ident = None
+    try:
+        ident = auth_mod.require(request.headers.get("X-Auth-Token"), perm)
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    actor = (ident or {}).get("sub") or str(payload.get("actor") or "unknown")
+    try:
+        return await asyncio.to_thread(
+            repository.move_spare, tenant, part_code, delta, actor,
+            str(payload.get("card_id") or ""), str(payload.get("asset_id") or ""),
+            str(payload.get("note") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@get("/v1/spares/issues")
+async def list_spare_issues_endpoint(request: Request, limit: int = 100) -> dict[str, Any]:
+    """备件领用/入库记录。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    rows = await asyncio.to_thread(repository.list_spare_issues, tenant, limit)
+    return {"tenant_id": tenant, "count": len(rows), "items": rows}
+
+
+# ---------- 知识库 ----------
+@get("/v1/knowledge")
+async def list_cases_endpoint(request: Request, q: str = "",
+                              limit: int = 100) -> dict[str, Any]:
+    """故障案例检索（标题/根因/标签/设备号）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    rows = await asyncio.to_thread(repository.list_cases, tenant, q, limit)
+    return {"tenant_id": tenant, "count": len(rows), "items": rows}
+
+
+@post("/v1/knowledge", status_code=201)
+async def create_case_endpoint(request: Request) -> dict[str, Any]:
+    """新增故障案例。需 card.confirm 权限。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        auth_mod.require(request.headers.get("X-Auth-Token"), "card.confirm")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    try:
+        return await asyncio.to_thread(repository.create_case, tenant, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+# ---------- 告警规则 ----------
+@get("/v1/rules")
+async def list_rules_endpoint(request: Request) -> dict[str, Any]:
+    """告警规则列表（阈值可配置）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    rows = await asyncio.to_thread(repository.list_alert_rules, tenant)
+    return {"tenant_id": tenant, "count": len(rows), "items": rows}
+
+
+@put("/v1/rules/{rule_id:str}")
+async def upsert_rule_endpoint(request: Request, rule_id: str) -> dict[str, Any]:
+    """新增/修改告警规则。需 plan.approve 权限（改阈值影响告警分级）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        auth_mod.require(request.headers.get("X-Auth-Token"), "plan.approve")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    payload["rule_id"] = rule_id
+    try:
+        return await asyncio.to_thread(repository.upsert_alert_rule, tenant, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @post("/v1/auth/login", status_code=200)
@@ -585,23 +748,13 @@ async def mcp_endpoint(request: Request) -> dict[str, Any]:
     return await asyncio.to_thread(handle_rpc, payload, tenant)
 
 
-@post("/v1/diagnose", status_code=200)
-async def diagnose_endpoint(request: Request) -> dict[str, Any]:
+async def _run_single_diagnose(tenant: str, req: DiagnoseRequest) -> dict[str, Any]:
+    """诊断核心：快照补全 → 规则计算 → 落库 → 读模型刷新 → 领域事件。
+
+    单点（POST /v1/diagnose）与批量（POST /v1/diagnose/batch）共用，
+    避免两条路径行为漂移。返回响应体。
+    """
     started = time.perf_counter()
-    payload: dict[str, Any] = await request.json()
-
-    tenant = request.headers.get("X-Tenant-Id")
-    if not tenant:
-        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
-
-    try:
-        req = msgspec.convert(payload, DiagnoseRequest, strict=False)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=HTTP_422_UNPROCESSABLE_ENTITY, detail=f"invalid payload: {exc}") from exc
-
-    if req.tenant_id != tenant:
-        raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="tenant mismatch")
-
     # 数据库兜底：请求缺维度时，从快照表补全（一次查询拿全 5 维，避免降级）
     if req.metrics.vib_rms_mm_s is None and os.getenv("PDM_DB_ENABLED", "1") == "1":
         try:
@@ -704,19 +857,100 @@ async def diagnose_endpoint(request: Request) -> dict[str, Any]:
     }
 
 
+@post("/v1/diagnose/batch", status_code=200)
+async def diagnose_batch_endpoint(request: Request) -> dict[str, Any]:
+    """批量诊断：按租户全量（或前缀）跑诊断，刷新读模型。
+
+    存在意义：这是生产环境唯一能让 read_asset_health 覆盖全部在监设备的入口。
+    此前只有测试脚本会逐台调 /v1/diagnose，导致 1200 台设备里只有被人工点过的
+    几台有健康指数。由 CronJob `batch-diagnose` 定期调用。
+
+    需 plan.edit 权限（属运维/计划动作，不是日常读操作）。
+    """
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        auth_mod.require(request.headers.get("X-Auth-Token"), "plan.edit")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    limit = max(1, min(int(payload.get("limit", 2000)), 5000))
+    prefix = str(payload.get("asset_prefix") or "")
+
+    assets = await asyncio.to_thread(repository.list_asset_ids, tenant, prefix, limit)
+    if not assets:
+        return {"tenant_id": tenant, "total": 0, "ok": 0, "failed": 0,
+                "detail": "no assets matched"}
+
+    sem = asyncio.Semaphore(8)          # 诊断是 CPU 密集，8 并发足够且不挤爆连接池
+    failures: list[dict[str, str]] = []
+
+    async def _one(asset_id: str) -> bool:
+        async with sem:
+            try:
+                req = msgspec.convert({"tenant_id": tenant, "asset_id": asset_id},
+                                      DiagnoseRequest, strict=False)
+                await _run_single_diagnose(tenant, req)
+                return True
+            except Exception as exc:  # noqa: BLE001
+                failures.append({"asset_id": asset_id, "error": str(exc)[:120]})
+                return False
+
+    t0 = time.perf_counter()
+    done = await asyncio.gather(*[_one(a) for a in assets])
+    ok = sum(1 for x in done if x)
+    return {
+        "tenant_id": tenant,
+        "total": len(assets),
+        "ok": ok,
+        "failed": len(failures),
+        "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+        "failures": failures[:10],
+    }
+
+
+@post("/v1/diagnose", status_code=200)
+async def diagnose_endpoint(request: Request) -> dict[str, Any]:
+    started = time.perf_counter()
+    payload: dict[str, Any] = await request.json()
+
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+
+    try:
+        req = msgspec.convert(payload, DiagnoseRequest, strict=False)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=HTTP_422_UNPROCESSABLE_ENTITY, detail=f"invalid payload: {exc}") from exc
+
+    if req.tenant_id != tenant:
+        raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    return await _run_single_diagnose(tenant, req)
+
+
 async def _on_startup() -> None:
     cache.l2 = await build_l2(os.getenv("PDM_REDIS_URL"))
     events.init(os.getenv("PDM_REDIS_URL"))
 
 app = Litestar(
-    route_handlers=[healthz, version, cache_stats, events_stats, integration_stats, asset_trend, warmup_endpoint, diagnose_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard, screen_page, console_page,
+    route_handlers=[healthz, version, cache_stats, events_stats, integration_stats, asset_trend, warmup_endpoint, diagnose_endpoint, diagnose_batch_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard, screen_page, console_page,
                    sync_alerts_endpoint, list_alerts_endpoint, ack_alert_endpoint,
                    list_diagnoses_endpoint, cost_stats_endpoint, org_tree_endpoint,
                    system_stats_endpoint, asset_rul_endpoint, rul_refresh_endpoint,
                    login_endpoint, me_endpoint, list_users_endpoint,
                    list_plans_endpoint, generate_inspections_endpoint,
                    list_inspections_endpoint, submit_inspection_endpoint,
-                   inspection_stats_endpoint],
+                   inspection_stats_endpoint, overview_stats_endpoint,
+                   append_worklog_endpoint, list_worklogs_endpoint,
+                   list_spares_endpoint, move_spare_endpoint, list_spare_issues_endpoint,
+                   list_cases_endpoint, create_case_endpoint,
+                   list_rules_endpoint, upsert_rule_endpoint],
     on_startup=[_on_startup],
     debug=os.getenv("PDM_ENV", "prod") != "prod",
 )

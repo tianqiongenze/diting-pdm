@@ -24,7 +24,7 @@ import urllib.request
 UPSTREAM = "http://10.167.2.175:32231"
 INGRESS_HOST = "pdm-api.10.167.2.175.nip.io"
 LISTEN = ("127.0.0.1", 18080)
-DEFAULT_AUTH = "cGRtYWRtaW46RGl0aW5nMjAyNiE="  # base64(pdmadmin:Diting2026!)
+DEFAULT_AUTH = "cGRtYWRtaW46M3I1UC15Z3JnLVdBY0stVzB5Qi1WejFx"  # base64(pdmadmin:<看板口令>)，口令轮换时须同步更新本行
 
 
 class Handler(http.server.BaseHTTPRequestHandler):

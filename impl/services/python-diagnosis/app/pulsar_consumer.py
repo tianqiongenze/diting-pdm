@@ -28,6 +28,7 @@ from typing import Any
 from . import repository
 
 SUBSCRIPTION = "pdm-projector-pulsar"
+BATCH_SIZE = int(os.getenv("PDM_CONSUMER_BATCH", "200"))
 PROJECTION_ID = "read-model-v1"  # 与 projector.py / go-eventpipe 一致，保证全局幂等
 
 
@@ -57,7 +58,13 @@ def _write_history(cur, tenant: str, asset: str, hi, level) -> None:
         pass
 
 
-def project(event: dict[str, Any]) -> str | None:
+def _project_one(cur: Any, event: dict[str, Any]) -> str | None:
+    """用调用方提供的游标做投影（不开新连接）。
+
+    拆出来是为了让消费循环能在一批消息里复用同一个连接：
+    原实现每条消息调两次 repository.connect()，1200 条消息就是 2400 次
+    建连，实测吞吐只有 ~1.5 条/秒，15 分钟的批量诊断根本追不上。
+    """
     etype = event.get("type", "")
     tenant = event.get("tenant_id", "")
     data = event.get("data") or {}
@@ -66,29 +73,44 @@ def project(event: dict[str, Any]) -> str | None:
         asset = data.get("asset_id")
         if not asset:
             return None
-        with repository.connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO read_asset_health(tenant_id,asset_id,hi,level,rul_p50_days,open_alerts) "
-                "VALUES (%s,%s,%s,%s,NULL,0) "
-                "ON DUPLICATE KEY UPDATE hi=VALUES(hi),level=VALUES(level)",
-                (tenant, asset, data.get("hi"), data.get("level")),
-            )
-            _write_history(cur, tenant, asset, data.get("hi"), data.get("level"))
+        cur.execute(
+            "INSERT INTO read_asset_health(tenant_id,asset_id,hi,level,rul_p50_days,open_alerts) "
+            "VALUES (%s,%s,%s,%s,NULL,0) "
+            "ON DUPLICATE KEY UPDATE hi=VALUES(hi),level=VALUES(level)",
+            (tenant, asset, data.get("hi"), data.get("level")),
+        )
+        _write_history(cur, tenant, asset, data.get("hi"), data.get("level"))
         return f"health<-{asset} hi={data.get('hi')}"
 
     if etype == "com.yadea.pdm.decision.cardCreated.v1":
         asset = data.get("asset_id")
         if not asset:
             return None
-        with repository.connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                "UPDATE read_asset_health SET open_alerts = open_alerts + 1 "
-                "WHERE tenant_id=%s AND asset_id=%s",
-                (tenant, asset),
-            )
+        cur.execute(
+            "UPDATE read_asset_health SET open_alerts = open_alerts + 1 "
+            "WHERE tenant_id=%s AND asset_id=%s",
+            (tenant, asset),
+        )
         return f"alerts+1<-{asset}"
 
     return None
+
+
+def project(event: dict[str, Any]) -> str | None:
+    """单事件投影（保留给单元测试与一次性调用）。"""
+    with repository.connect() as conn, conn.cursor() as cur:
+        action = _project_one(cur, event)
+        conn.commit()
+        return action
+
+
+def _dedupe(cur: Any, event_id: str) -> bool:
+    """已处理过返回 True（同连接内完成，避免额外建连）。"""
+    cur.execute(
+        "INSERT IGNORE INTO processed_event(consumer, event_id) VALUES (%s, %s)",
+        (PROJECTION_ID, event_id),
+    )
+    return cur.rowcount == 0
 
 
 def run_forever(client: Any, tenants: list[str], timeout_ms: int = 1000) -> None:
@@ -116,44 +138,69 @@ def run_forever(client: Any, tenants: list[str], timeout_ms: int = 1000) -> None
         print("[fatal] no consumer created", flush=True)
         return
 
-    stat = {"read": 0, "projected": 0, "skipped": 0, "errors": 0}
-    print(f"[loop] consuming {len(consumers)} topics", flush=True)
+    stat = {"read": 0, "projected": 0, "skipped": 0, "errors": 0, "batches": 0}
+    print(f"[loop] consuming {len(consumers)} topics (batch={BATCH_SIZE})", flush=True)
     while True:
-        progressed = False
+        # ---- 1) 尽量一次多取：首条阻塞等待，其余非阻塞抽干 ----
+        batch: list[tuple[Any, Any]] = []          # (consumer, msg)
         for tenant, topic, consumer in consumers:
+            first = True
+            while len(batch) < BATCH_SIZE:
+                try:
+                    msg = consumer.receive(
+                        timeout_millis=timeout_ms if first else 0)
+                except Exception:  # noqa: BLE001 - 超时即无消息，正常
+                    break
+                if msg is None:
+                    break
+                batch.append((consumer, msg))
+                first = False
+        if not batch:
+            continue
+
+        # ---- 2) 一批消息共用一个连接、一个事务 ----
+        stat["read"] += len(batch)
+        stat["batches"] += 1
+        try:
+            with repository.connect() as conn, conn.cursor() as cur:
+                for consumer, msg in batch:
+                    try:
+                        event = json.loads(msg.data().decode())
+                    except Exception:  # noqa: BLE001 - 脏数据：解析不了重投也没用
+                        stat["errors"] += 1
+                        continue
+                    if _dedupe(cur, event.get("id", str(msg.message_id()))):
+                        stat["skipped"] += 1
+                        continue
+                    try:
+                        action = _project_one(cur, event)
+                    except Exception as exc:  # noqa: BLE001
+                        stat["errors"] += 1
+                        print(f"[error] project failed: {exc}", flush=True)
+                        continue
+                    if action:
+                        stat["projected"] += 1
+                    else:
+                        stat["skipped"] += 1
+                conn.commit()
+        except Exception as exc:  # noqa: BLE001 - 整批失败：全部重投
+            stat["errors"] += len(batch)
+            print(f"[error] batch failed: {exc}", flush=True)
+            for consumer, msg in batch:
+                try:
+                    consumer.negative_acknowledge(msg)
+                except Exception:  # noqa: BLE001
+                    pass
+            time.sleep(1)
+            continue
+
+        # 整批提交成功后统一 ACK（含脏数据：解析失败的重投无意义，直接放过）
+        for consumer, msg in batch:
             try:
-                msg = consumer.receive(timeout_millis=timeout_ms)
-            except Exception:  # noqa: BLE001 - 超时即无消息，正常
-                continue
-            if msg is None:
-                continue
-            progressed = True
-            stat["read"] += 1
-            try:
-                event = json.loads(msg.data().decode())
+                consumer.acknowledge(msg)
             except Exception:  # noqa: BLE001
-                stat["errors"] += 1
-                consumer.acknowledge(msg)
-                continue
-            if _already_processed(event.get("id", str(msg.message_id()))):
-                stat["skipped"] += 1
-                consumer.acknowledge(msg)
-                continue
-            try:
-                action = project(event)
-                if action:
-                    stat["projected"] += 1
-                    print(f"[pulsar] {tenant} {event.get('type')} → {action}", flush=True)
-                else:
-                    stat["skipped"] += 1
-            except Exception as exc:  # noqa: BLE001
-                stat["errors"] += 1
-                print(f"[error] {tenant}: {exc}", flush=True)
-                consumer.negative_acknowledge(msg)
-                continue
-            consumer.acknowledge(msg)
-        if progressed and stat["read"] % 20 == 0:
-            print(stat, flush=True)
+                pass
+        print(stat, flush=True)
 
 
 def main() -> None:
