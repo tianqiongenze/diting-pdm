@@ -20,7 +20,40 @@
   --r-s:7px; --r-m:11px; --r-l:15px;
   --f-num:ui-monospace,"SF Mono",Consolas,monospace;
   --nav-w:60px;
+  /* 图表用色：SVG 里通过 var() 引用，切换主题时自动跟随，无需重绘 */
+  --grid:var(--grid); --track:var(--grid); --track-2:var(--track-2);
 }
+
+/* ===== 暗色主题 =====
+   只覆盖令牌，不改组件：所有组件都走 var()，因此一套覆盖即全局生效。
+   图表里的网格线/进度槽也走 --grid / --track，暗色下自动变深。 */
+body.dark{
+  --bg:#0B1220; --panel:#131C2B; --panel-2:#0F1826;
+  --line:#1F2B3D; --line-2:#2A3A52;
+  --txt:#E6EDF7; --txt-2:#9FB0C8; --txt-3:#6B7E99;
+  --accent:#3B82F6; --accent-l:#15233A; --accent-2:#818CF8;
+  --red:#F43F5E; --red-l:#2A1420;
+  --orange:#FB923C; --orange-l:#2A1D12;
+  --yellow:#FACC15; --yellow-l:#2A2410;
+  --green:#22C55E; --green-l:#0F2418;
+  --grid:#1E2A3C; --track:#1E2A3C; --track-2:#2A3A52;
+  --topbar-bg:rgba(19,28,43,.88);
+  --sh-s:0 1px 2px rgba(0,0,0,.4);
+  --sh-m:0 2px 10px rgba(0,0,0,.45);
+  --sh-l:0 10px 32px rgba(0,0,0,.55);
+}
+body.dark .kpi,body.dark .card,body.dark .kcol,body.dark .kcard{background:var(--panel)}
+body.dark .badge.crit{background:var(--panel-2)}
+body.dark .seg button{background:var(--panel);color:var(--txt-2)}
+body.dark .seg button.on{background:var(--accent);color:#fff}
+body.dark .seg2 button{background:var(--panel);color:var(--txt-2)}
+body.dark table tbody tr:hover{background:var(--panel-2)}
+body.dark .modal{background:var(--panel)}
+body.dark .drawer{background:var(--panel)}
+body.dark input,body.dark select,body.dark textarea{
+  background:var(--panel-2);color:var(--txt);border-color:var(--line);
+}
+body.dark .toast{background:#020617;border:1px solid var(--line)}
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}
 body{
@@ -45,7 +78,7 @@ a{color:inherit;text-decoration:none}
   width:40px;height:40px;border-radius:11px;display:grid;place-items:center;
   color:#7C8CA6;transition:.18s;position:relative;
 }
-.nav a:hover{background:rgba(255,255,255,.07);color:#CBD5E1}
+.nav a:hover{background:rgba(255,255,255,.09);color:#E6EDF7}
 .nav a.on{background:rgba(56,189,248,.14);color:#38BDF8}
 .nav a.on::before{
   content:"";position:absolute;left:-10px;top:11px;bottom:11px;width:3px;
@@ -67,7 +100,7 @@ a{color:inherit;text-decoration:none}
 /* ===== 主体 ===== */
 .main{margin-left:var(--nav-w);min-height:100vh;display:flex;flex-direction:column}
 .topbar{
-  height:60px;flex:0 0 60px;background:rgba(255,255,255,.86);backdrop-filter:blur(12px);
+  height:60px;flex:0 0 60px;background:var(--topbar-bg);backdrop-filter:blur(12px);
   border-bottom:1px solid var(--line);display:flex;align-items:center;
   gap:16px;padding:0 22px;position:sticky;top:0;z-index:20;
 }
@@ -169,7 +202,7 @@ tbody tr:last-child td{border-bottom:0}
 
 /* 健康条 */
 .hbar{display:flex;align-items:center;gap:9px}
-.hbar .track{width:74px;height:6px;border-radius:4px;background:#EDF1F7;overflow:hidden;flex:0 0 auto}
+.hbar .track{width:74px;height:6px;border-radius:4px;background:var(--grid);overflow:hidden;flex:0 0 auto}
 .hbar .fill{height:100%;border-radius:4px;transition:width .6s ease}
 .hbar .num{font-family:var(--f-num);font-size:12.5px;min-width:34px;text-align:right}
 
@@ -212,7 +245,7 @@ tbody tr:last-child td{border-bottom:0}
 .kcol-h .dot{width:8px;height:8px;border-radius:50%}
 .kcol-h b{font-size:13px;font-weight:600}
 .kcol-h .n{margin-left:auto;font-family:var(--f-num);font-size:12px;color:var(--txt-2);
-           background:#fff;border:1px solid var(--line);border-radius:999px;padding:1px 8px}
+           background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
 .kcol-b{padding:12px;display:flex;flex-direction:column;gap:10px;flex:1;min-height:0;overflow-y:auto}
 .kcol-b::-webkit-scrollbar{width:6px}
 .kcol-b::-webkit-scrollbar-thumb{background:#D5DDEA;border-radius:3px}
@@ -227,7 +260,7 @@ tbody tr:last-child td{border-bottom:0}
 .kcard .cc{font-size:12.5px;color:var(--txt-2);line-height:1.55;margin-top:8px;
            display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .kcard .r2{display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:10px;
-           border-top:1px dashed #EDF1F7}
+           border-top:1px dashed var(--grid)}
 
 /* ===== 诊断工作台 ===== */
 .diag-grid{display:grid;grid-template-columns:minmax(300px,360px) 1fr;gap:16px;align-items:start}
@@ -241,7 +274,7 @@ tbody tr:last-child td{border-bottom:0}
 .field .hint{font-size:11.5px;color:var(--txt-3);margin-top:5px}
 .result-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .ev-item{
-  display:flex;gap:9px;padding:9px 0;border-bottom:1px dashed #EDF1F7;font-size:12.5px;line-height:1.55;
+  display:flex;gap:9px;padding:9px 0;border-bottom:1px dashed var(--grid);font-size:12.5px;line-height:1.55;
 }
 .ev-item:last-child{border-bottom:0}
 .ev-item .n{
@@ -250,7 +283,7 @@ tbody tr:last-child td{border-bottom:0}
 }
 .dim-row{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:12.5px}
 .dim-row .nm{width:64px;color:var(--txt-2);flex:0 0 auto}
-.dim-row .tr{flex:1;height:7px;border-radius:4px;background:#EDF1F7;overflow:hidden}
+.dim-row .tr{flex:1;height:7px;border-radius:4px;background:var(--grid);overflow:hidden}
 .dim-row .fl{height:100%;border-radius:4px;background:linear-gradient(90deg,#93C5FD,var(--accent))}
 .dim-row .vv{font-family:var(--f-num);width:52px;text-align:right;color:var(--txt-2)}
 
@@ -274,6 +307,36 @@ tbody tr:last-child td{border-bottom:0}
 .kv{display:grid;grid-template-columns:88px 1fr;gap:9px 12px;font-size:13px}
 .kv .k{color:var(--txt-3);font-size:12.5px}
 .kv .v{color:var(--txt)}
+
+.ins-item{
+  display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px dashed var(--line);
+}
+.ins-item .nm{font-size:13px;font-weight:550;width:132px;flex:0 0 auto}
+.ins-item .std{font-size:11px;color:var(--txt-3);width:118px;flex:0 0 auto}
+.ins-item .val{
+  width:96px;height:30px;border:1px solid var(--line);border-radius:8px;
+  padding:0 9px;font-size:12.5px;font-family:var(--f-num);
+}
+.seg2{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-left:auto}
+.seg2 button{
+  padding:5px 13px;font-size:12px;border:0;background:var(--panel);cursor:pointer;color:var(--txt-2);
+  font-family:inherit;
+}
+.btn.dis{opacity:.45;cursor:not-allowed}
+.seg2 button.ok.on{background:var(--green-l);color:var(--green);font-weight:600}
+.seg2 button.ng.on{background:var(--red-l);color:var(--red);font-weight:600}
+
+/* ===== 弹窗 ===== */
+.modal-mask{
+  position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(3px);
+  z-index:70;display:none;align-items:center;justify-content:center;
+}
+.modal-mask.on{display:flex}
+.modal{
+  background:var(--panel);border-radius:var(--r-l);box-shadow:var(--sh-l);
+  animation:pop .2s cubic-bezier(.22,1,.36,1);
+}
+@keyframes pop{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:none}}
 
 /* ===== Toast ===== */
 .toast{
@@ -336,6 +399,12 @@ tbody tr:last-child td{border-bottom:0}
   </div>
   <div class="nsep"></div>
   <div class="ngroup">
+    <a href="#/inspections" data-tip="点检巡检" data-v="inspections">
+      <svg viewBox="0 0 24 24"><path d="M9 4h6M9 4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2"/><path d="M9 11l2 2 3.5-3.5"/></svg>
+    </a>
+    <a href="#/plans" data-tip="保养计划" data-v="plans">
+      <svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M8 3v4M16 3v4M3.5 10h17M8 14h3M8 17.5h6"/></svg>
+    </a>
     <a href="#/cards" data-tip="工单看板" data-v="cards">
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="16" rx="1.5"/><rect x="10.5" y="4" width="6" height="11" rx="1.5"/><rect x="18" y="4" width="3" height="16" rx="1.5"/></svg>
     </a>
@@ -354,6 +423,16 @@ tbody tr:last-child td{border-bottom:0}
     <h1 id="page-title">运营看板</h1>
     <div class="crumb" id="crumb">设备健康总览</div>
     <div class="top-right">
+      <button class="btn" id="btn-theme" title="切换深色">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
+          <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/>
+          <circle cx="12" cy="12" r="4"/></svg>
+      </button>
+      <button class="btn" id="btn-user" style="max-width:190px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>
+        <span id="user-label">登录</span>
+      </button>
       <div class="tenant">
         <span>租户</span>
         <select id="tenant">
@@ -672,6 +751,58 @@ tbody tr:last-child td{border-bottom:0}
     </div>
   </section>
 
+  <!-- ===== 点检巡检 ===== -->
+  <section class="view" id="v-inspections">
+    <div class="kpis" id="ins-kpis"></div>
+    <div class="card grow">
+      <div class="filters">
+        <div class="seg" id="seg-istatus">
+          <button class="on" data-s="">全部</button>
+          <button data-s="PENDING">待执行</button>
+          <button data-s="DONE">已完成</button>
+        </div>
+        <input type="search" id="iq" placeholder="按设备位号筛选，如 FAN">
+        <button class="btn sm" id="btn-gen-ins">按计划生成任务</button>
+        <span class="count" id="ins-count">—</span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>任务号</th><th>设备</th><th>点检内容</th><th>到期</th>
+            <th>剩余</th><th>状态</th><th>结果</th><th style="text-align:right">操作</th>
+          </tr></thead>
+          <tbody id="ins-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 保养计划 ===== -->
+  <section class="view" id="v-plans">
+    <div class="kpis" id="plan-kpis"></div>
+    <div class="card grow">
+      <div class="filters">
+        <input type="search" id="pq" placeholder="按计划号/设备号筛选">
+        <div class="seg" id="seg-pdue">
+          <button class="on" data-d="">全部</button>
+          <button data-d="overdue">已逾期</button>
+          <button data-d="7">7 天内到期</button>
+        </div>
+        <span class="count" id="plan-count">—</span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>计划号</th><th>设备</th><th>名称</th><th>周期</th>
+            <th>上次保养</th><th>下次到期</th><th>剩余</th><th>检查项</th><th style="text-align:right">操作</th>
+          </tr></thead>
+          <tbody id="plan-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+
 </div>
 <div class="drawer-mask" id="mask"></div>
 <div class="drawer" id="drawer">
@@ -680,6 +811,60 @@ tbody tr:last-child td{border-bottom:0}
     <button class="x" id="dr-x">✕</button>
   </div>
   <div class="drawer-b" id="dr-body"></div>
+</div>
+<div class="modal-mask" id="ins-mask">
+  <div class="modal" style="width:min(620px,94vw);max-height:88vh;display:flex;flex-direction:column">
+    <div style="padding:20px 24px 0">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:15.5px;font-weight:650" id="ins-m-title">执行点检</div>
+        <span class="badge crit c" id="ins-m-tag">—</span>
+      </div>
+      <div style="font-size:11.5px;color:var(--txt-3);margin-top:4px" id="ins-m-sub">—</div>
+    </div>
+    <div style="padding:16px 24px;overflow-y:auto;flex:1" id="ins-m-items"></div>
+    <div style="padding:0 24px 20px">
+      <input id="ins-m-note" placeholder="备注（如异常描述、处理建议）"
+        style="width:100%;height:36px;border:1px solid var(--line);border-radius:9px;padding:0 12px;
+        font-size:13px;font-family:inherit;margin-bottom:13px">
+      <div style="display:flex;gap:10px">
+        <button class="btn" id="ins-m-cancel" style="flex:1;justify-content:center;height:38px">取消</button>
+        <button class="btn pri" id="ins-m-submit" style="flex:1.4;justify-content:center;height:38px">提交点检结果</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="modal-mask" id="login-mask">
+  <div class="modal" style="width:min(400px,92vw)">
+    <div style="padding:24px 26px 20px">
+      <div style="display:flex;align-items:center;gap:11px;margin-bottom:20px">
+        <div style="width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+          background:linear-gradient(135deg,#38BDF8,#6366F1);color:#fff;font-weight:800;font-size:17px">谛</div>
+        <div>
+          <div style="font-size:16px;font-weight:650">登录谛听 PdM</div>
+          <div style="font-size:11.5px;color:var(--txt-3)">按角色授予不同操作权限</div>
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:13px">
+        <label>用户名</label>
+        <input id="login-user" placeholder="admin / sup_wang / op_li" autocomplete="username">
+      </div>
+      <div class="field" style="margin-bottom:18px">
+        <label>密码</label>
+        <input id="login-pass" type="password" placeholder="请输入密码" autocomplete="current-password">
+      </div>
+      <div id="login-err" style="display:none;font-size:12.5px;color:var(--red);
+        background:var(--red-l);padding:8px 11px;border-radius:8px;margin-bottom:13px"></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn" id="login-cancel" style="flex:1;justify-content:center;height:38px">取消</button>
+        <button class="btn pri" id="login-submit" style="flex:1.4;justify-content:center;height:38px">登录</button>
+      </div>
+      <div style="margin-top:15px;padding-top:13px;border-top:1px dashed var(--line);
+        font-size:11px;color:var(--txt-3);line-height:1.7">
+        演示账号：<b>admin/Admin@2026</b>（主管）· <b>sup_wang/Super@2026</b>（维修主管）
+        · <b>op_li/Oper@2026</b>（值班员）
+      </div>
+    </div>
+  </div>
 </div>
 <div class="toast" id="toast"><span class="dot"></span><span id="toast-msg"></span></div>
 
@@ -692,7 +877,20 @@ const LVN = {red:'红色', orange:'橙色', yellow:'黄色', green:'绿色'};
 let TENANT = localStorage.getItem('pdm.tenant') || 'site-a';
 $('tenant').value = TENANT;
 
-function hdr(extra={}){ return Object.assign({'Content-Type':'application/json','X-Tenant-Id':TENANT}, extra); }
+/* 认证状态：token 存 localStorage，登出即清除 */
+const AUTH = {
+  token: localStorage.getItem('pdm.token') || '',
+  user: JSON.parse(localStorage.getItem('pdm.user') || 'null'),
+  perms: JSON.parse(localStorage.getItem('pdm.perms') || '[]'),
+};
+function can(perm){ return AUTH.perms.includes(perm); }
+function isLoggedIn(){ return !!AUTH.token && !!AUTH.user; }
+
+function hdr(extra={}){
+  const h = {'Content-Type':'application/json','X-Tenant-Id':TENANT};
+  if(AUTH.token) h['X-Auth-Token'] = AUTH.token;
+  return Object.assign(h, extra);
+}
 async function api(path, opts={}){
   try{
     const r = await fetch(BASE + path, Object.assign({headers:hdr()}, opts));
@@ -746,6 +944,8 @@ const VIEWS = {
   diagnose:  {title:'诊断工作台', crumb:'单设备诊断', fn: renderDiagnose},
   diagnoses: {title:'诊断历史', crumb:'历史记录检索', fn: renderDiagnoses},
   cost:      {title:'成本效益', crumb:'投入产出分析', fn: renderCost},
+  inspections:{title:'点检巡检', crumb:'按计划执行点检', fn: renderInspections},
+  plans:     {title:'保养计划', crumb:'周期与到期管理', fn: renderPlans},
   cards:     {title:'工单看板', crumb:'方案卡闭环',   fn: renderCards},
   system:    {title:'系统运维', crumb:'服务与数据状态', fn: renderSystem},
 };
@@ -850,7 +1050,7 @@ async function renderCritBars(){
     return `<div style="display:flex;align-items:center;gap:11px;margin-bottom:13px">
       <span class="badge crit ${(x.criticality||'').toLowerCase()}" style="width:46px;justify-content:center">
         ${x.criticality} 类</span>
-      <div style="flex:1;height:9px;border-radius:5px;background:#EDF1F7;overflow:hidden">
+      <div style="flex:1;height:9px;border-radius:5px;background:var(--grid);overflow:hidden">
         <div style="height:100%;width:${pct}%;border-radius:5px;background:${c};opacity:.85"></div>
       </div>
       <span class="mono" style="width:76px;text-align:right;font-size:12.5px">
@@ -877,7 +1077,7 @@ function renderFeed(counts, pending, done){
     items.unshift({t:fmt(0), c:'#16A34A', m:'全部设备处于绿色区间，运行正常'});
 
   $('feed-list').innerHTML = items.map(e=>`
-    <div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px dashed #EDF1F7;font-size:12.5px">
+    <div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px dashed var(--grid);font-size:12.5px">
       <span class="mono" style="color:var(--txt-3);flex:0 0 46px">${e.t}</span>
       <span style="width:6px;height:6px;border-radius:50%;background:${e.c};margin-top:7px;flex:0 0 auto"></span>
       <span style="color:var(--txt-2);line-height:1.55">${e.m}</span>
@@ -942,13 +1142,13 @@ function drawArea(box, series){
     : '';
   const grid = [0,25,50,75,100].map(v=>{
     const y = ys(v).toFixed(1);
-    return `<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="#EDF1F7"/>
+    return `<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="var(--grid)"/>
       <text x="8" y="${(+y+3.5).toFixed(1)}" font-size="10" fill="#94A3B8">${v}</text>`;
   }).join('');
   /* 点数过多时省略圆点：175 个点连起来会变成一条粗虚线，反而糊 */
   const dots = series.length > 40 ? '' : series.map((p,i)=>{
     const c = LVC[p.level] || '#1D4ED8';
-    return `<circle cx="${xs(i).toFixed(1)}" cy="${ys(p.hi).toFixed(1)}" r="3" fill="#fff"
+    return `<circle cx="${xs(i).toFixed(1)}" cy="${ys(p.hi).toFixed(1)}" r="3" fill="var(--panel)"
       stroke="${c}" stroke-width="2"/>`;
   }).join('');
   const xlab = `<text x="${P.l}" y="${H-8}" font-size="10" fill="#94A3B8">${series[0].ts.slice(5,16)}</text>
@@ -1097,10 +1297,10 @@ async function runDiagnose(){
       </div>
     </div>
     ${dims.length ? dims.map(x=>`
-      <div style="padding:9px 0;border-bottom:1px dashed #EDF1F7">
+      <div style="padding:9px 0;border-bottom:1px dashed var(--grid)">
         <div style="display:flex;align-items:center;gap:10px;font-size:12.5px">
           <span style="width:52px;color:var(--txt-2);font-weight:600">${x.name}</span>
-          <div class="tr" style="flex:1;height:7px;border-radius:4px;background:#EDF1F7;overflow:hidden">
+          <div class="tr" style="flex:1;height:7px;border-radius:4px;background:var(--grid);overflow:hidden">
             <div style="height:100%;border-radius:4px;background:linear-gradient(90deg,#93C5FD,var(--accent));
               width:${Math.min(100, Math.abs(x.impact||0))}%"></div></div>
           <span class="mono" style="width:58px;text-align:right;color:var(--txt-2)">
@@ -1166,17 +1366,17 @@ function drawRadar(box, diag){
   };
   const rings = [0.25,0.5,0.75,1].map(k=>{
     const p = Array.from({length:N},(_,i)=>pt(i,R*k).map(v=>v.toFixed(1)).join(',')).join(' ');
-    return `<polygon points="${p}" fill="none" stroke="#EDF1F7" stroke-width="1"/>`;
+    return `<polygon points="${p}" fill="none" stroke="var(--grid)" stroke-width="1"/>`;
   }).join('');
   const spokes = Array.from({length:N},(_,i)=>{
     const [x,y] = pt(i,R);
-    return `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="#EDF1F7"/>`;
+    return `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="var(--grid)"/>`;
   }).join('');
   const poly = vals.map((v,i)=>pt(i, R*Math.max(.05,v)).map(n=>n.toFixed(1)).join(',')).join(' ');
   const labs = RADAR_DIMS.map((d,i)=>{
     const [x,y] = pt(i, R+17);
     const v = vals[i];
-    return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="10.5" fill="#5B6B84"
+    return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="10.5" fill="var(--txt-2)"
       text-anchor="middle" dominant-baseline="middle">${d.key}</text>
       <text x="${x.toFixed(1)}" y="${(y+12).toFixed(1)}" font-size="9.5"
       fill="${v>=0.7?'#E11D48':(v>=0.4?'#EA580C':'#94A3B8')}"
@@ -1190,7 +1390,7 @@ function drawRadar(box, diag){
   box.innerHTML = `<svg viewBox="0 0 ${W} ${H}">
     ${rings}${spokes}
     ${hasData?`<polygon points="${poly}" fill="rgba(29,78,216,.13)" stroke="#1D4ED8" stroke-width="2"/>
-    ${dots}`:`<circle cx="${cx}" cy="${cy}" r="3" fill="#CBD5E1"/>`}
+    ${dots}`:`<circle cx="${cx}" cy="${cy}" r="3" fill="var(--track-2)"/>`}
     ${labs}</svg>`;
 }
 
@@ -1224,7 +1424,10 @@ function closeDrawer(){
 
 /* ===== 事件委托 ===== */
 document.addEventListener('click', async e=>{
-  const t = e.target.closest('[data-diag],[data-trend],[data-confirm],[data-asset],[data-card]');
+  /* 白名单必须与所有可交互属性同步：早期只列了 5 个，导致后来新增的
+     data-ack / data-esc / data-asset360 / data-orgfilter / data-ins
+     分支全是死代码（按钮点了没反应，且不报错）。 */
+  const t = e.target.closest('[data-diag],[data-trend],[data-confirm],[data-asset],[data-card],[data-ack],[data-esc],[data-ins],[data-asset360],[data-orgfilter]');
   if(!t) return;
 
   if(t.dataset.confirm){
@@ -1256,6 +1459,10 @@ document.addEventListener('click', async e=>{
     $('trend-asset').value = t.dataset.trend;
     closeDrawer();
     setTimeout(()=>loadTrend(t.dataset.trend), 120);
+    return;
+  }
+  if(t.dataset.ins){
+    openInspect(t.dataset.ins);
     return;
   }
   if(t.dataset.asset && !t.dataset.diag){
@@ -1315,6 +1522,123 @@ $('btn-consult').onclick = async ()=>{
     await loadAll(); route();
   }else{ toast('会诊失败：' + (r?.detail || '未知错误')); }
 };
+
+/* ---------- 点检 / 保养交互 ---------- */
+$('seg-istatus').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  [...$('seg-istatus').children].forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); INS.status = b.dataset.s; renderInspections();
+});
+$('iq').addEventListener('input', e=>{
+  clearTimeout(window.__iqT);
+  window.__iqT = setTimeout(()=>{ INS.q = e.target.value.trim(); renderInspections(); }, 300);
+});
+$('btn-gen-ins').onclick = async ()=>{
+  if(!canDo('plan.edit')){ toast('当前角色无 plan.edit 权限，请用主管账号登录'); return; }
+  const btn = $('btn-gen-ins');
+  btn.disabled = true; btn.textContent = '生成中…';
+  const r = await api('/v1/inspections/generate', {method:'POST',
+    body:JSON.stringify({days:3, limit:60})});
+  btn.disabled = false; btn.textContent = '按计划生成任务';
+  if(r && r.created != null){
+    toast(`生成完成：新建 ${r.created} 条，跳过 ${r.skipped} 条（已存在）`);
+    renderInspections();
+  }else{
+    toast('生成失败：' + ((r && (r.detail || r._raw)) || '未知错误'));
+  }
+};
+$('ins-m-items').addEventListener('click', e=>{
+  const b = e.target.closest('.seg2 button'); if(!b) return;
+  const box = b.parentElement;
+  [...box.children].forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+});
+$('ins-m-cancel').onclick = ()=> $('ins-mask').classList.remove('on');
+$('ins-m-submit').onclick = submitInspect;
+$('seg-pdue').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  [...$('seg-pdue').children].forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); PLN.due = b.dataset.d; renderPlans();
+});
+$('pq').addEventListener('input', e=>{
+  clearTimeout(window.__pqT);
+  window.__pqT = setTimeout(()=>{ PLN.q = e.target.value.trim(); renderPlans(); }, 300);
+});
+
+/* ---------- 主题（浅色 / 深色） ---------- */
+const THEME_KEY = 'pdm.theme';
+function applyTheme(t){
+  const dark = t === 'dark';
+  document.body.classList.toggle('dark', dark);
+  localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light');
+  const btn = $('btn-theme');
+  if(btn) btn.title = dark ? '切换浅色' : '切换深色';
+}
+applyTheme(localStorage.getItem(THEME_KEY) || 'light');
+$('btn-theme').onclick = ()=>{
+  applyTheme(document.body.classList.contains('dark') ? 'light' : 'dark');
+};
+
+/* ---------- 登录 / 登出 ---------- */
+function refreshUserLabel(){
+  const el = $('user-label');
+  if(!el) return;
+  if(isLoggedIn()){
+    el.textContent = `${AUTH.user.display_name || AUTH.user.username} · ${AUTH.user.role_label || AUTH.user.role}`;
+  }else{
+    el.textContent = '登录';
+  }
+}
+function openLogin(){
+  $('login-err').style.display = 'none';
+  $('login-mask').classList.add('on');
+  setTimeout(()=>$('login-user').focus(), 60);
+}
+function closeLogin(){ $('login-mask').classList.remove('on'); }
+
+async function doLogin(){
+  const u = $('login-user').value.trim();
+  const pw = $('login-pass').value;
+  const err = $('login-err');
+  if(!u || !pw){ err.textContent='请输入用户名和密码'; err.style.display='block'; return; }
+  const btn = $('login-submit');
+  btn.disabled = true; btn.textContent = '登录中…';
+  const r = await api('/v1/auth/login', {method:'POST',
+    body:JSON.stringify({username:u, password:pw})});
+  btn.disabled = false; btn.textContent = '登录';
+  if(r && r.token){
+    AUTH.token = r.token;
+    AUTH.user = {username:r.username, role:r.role, role_label:r.role_label,
+                 display_name:r.display_name};
+    AUTH.perms = r.permissions || [];
+    localStorage.setItem('pdm.token', AUTH.token);
+    localStorage.setItem('pdm.user', JSON.stringify(AUTH.user));
+    localStorage.setItem('pdm.perms', JSON.stringify(AUTH.perms));
+    closeLogin();
+    $('login-pass').value = '';
+    refreshUserLabel();
+    toast(`欢迎，${AUTH.user.display_name || AUTH.user.username}（${AUTH.user.role_label}）`);
+    route();
+  }else{
+    err.textContent = (r && (r.detail || r._raw)) || '登录失败';
+    err.style.display = 'block';
+  }
+}
+
+function logout(){
+  AUTH.token=''; AUTH.user=null; AUTH.perms=[];
+  ['pdm.token','pdm.user','pdm.perms'].forEach(k=>localStorage.removeItem(k));
+  refreshUserLabel();
+  toast('已登出');
+  route();
+}
+
+$('btn-user').onclick = ()=>{ isLoggedIn() ? logout() : openLogin(); };
+$('login-cancel').onclick = closeLogin;
+$('login-submit').onclick = doLogin;
+$('login-pass').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+$('login-user').addEventListener('keydown', e=>{ if(e.key==='Enter') $('login-pass').focus(); });
+
 $('seg-astatus').addEventListener('click', e=>{
   const b = e.target.closest('button'); if(!b) return;
   [...$('seg-astatus').children].forEach(x=>x.classList.remove('on'));
@@ -1474,15 +1798,22 @@ async function renderAlerts(){
         <div style="font-size:12.5px;color:var(--txt)">${a.message||'—'}</div>
         <div style="font-size:11px;color:var(--txt-3);margin-top:2px">${a.action_hint||''}</div>
       </td>
-      <td><b class="mono">${a.asset_id}</b></td>
+      <td>
+        <b class="mono">${a.asset_id}</b>
+        <div style="font-size:10.5px;color:${a.rul_days==null?'var(--txt-3)':(a.rul_days<=7?'var(--red)':'var(--txt-2)')};margin-top:1px">
+          ${a.rul_days==null ? 'RUL 未知' : (a.rul_days<=0 ? 'RUL 已到期' : 'RUL ' + a.rul_days + ' 天')}
+        </div>
+      </td>
       <td><span class="mono" style="font-size:11px;color:var(--txt-3)">${a.rule_id}</span></td>
       <td style="color:${slaColor};font-weight:600;font-size:12px;white-space:nowrap">${slaTxt}</td>
       <td><span class="badge ${cls}">${stMap[a.status]||a.status}</span></td>
       <td style="font-size:12px;color:var(--txt-2)">${a.owner_role||'—'}</td>
       <td style="text-align:right;white-space:nowrap">
         ${a.status==='CLOSED' ? `<span style="font-size:11.5px;color:var(--txt-3)">${a.ack_by||''}</span>`
-          : `<button class="btn sm" data-ack="${a.alert_id}">确认</button>
-             <button class="btn sm" data-esc="${a.alert_id}">升级</button>`}
+          : `${can('alert.ack') ? `<button class="btn sm" data-ack="${a.alert_id}">确认</button>` : ''}
+             ${can('alert.escalate') ? `<button class="btn sm" data-esc="${a.alert_id}">升级</button>` : ''}
+             ${(!can('alert.ack') && !can('alert.escalate'))
+               ? '<span style="font-size:11px;color:var(--txt-3)">需登录</span>' : ''}`}
       </td></tr>`;
   }).join('');
 }
@@ -1495,11 +1826,13 @@ async function renderAsset360(assetId){
   $('a360-sub').textContent = '加载中…';
   $('a360-kv').innerHTML = emptyBox('加载中…', '');
 
-  const [detail, trend, diags] = await Promise.all([
+  const [detail, trend, diags, rulResp] = await Promise.all([
     fetchAsset(`/api/v1/assets/${encodeURIComponent(assetId)}`),
     api(`/v1/assets/${encodeURIComponent(assetId)}/trend?days=7`),
     api(`/v1/diagnoses?asset_id=${encodeURIComponent(assetId)}&limit=20`),
+    api(`/v1/assets/${encodeURIComponent(assetId)}/rul`),
   ]);
+  const rul = (rulResp && rulResp.rul_days != null) ? rulResp.rul_days : null;
 
   const asset = (detail && detail.asset) || a || {};
   const mps = (detail && detail.measure_points) || [];
@@ -1525,6 +1858,10 @@ async function renderAsset360(assetId){
         <div class="mono" style="font-size:15px;margin-top:3px">${a&&a.rms!=null?Number(a.rms).toFixed(3):'—'}</div></div>
       <div><div style="font-size:11.5px;color:var(--txt-3)">测点数</div>
         <div class="mono" style="font-size:15px;margin-top:3px">${detail?.measure_point_count ?? mps.length}</div></div>
+      <div><div style="font-size:11.5px;color:var(--txt-3)">剩余寿命 RUL</div>
+        <div class="mono" style="font-size:15px;margin-top:3px;color:${
+          rul==null?'var(--txt-3)':(rul<=7?'var(--red)':'var(--green)')}">
+          ${rul==null ? '无劣化趋势' : (rul<=0 ? '已到期' : rul + ' 天')}</div></div>
     </div>`;
 
   /* 趋势 */
@@ -1551,7 +1888,7 @@ async function renderAsset360(assetId){
   $('a360-diag-sub').textContent = `${dl.length} 条`;
   $('a360-diags').innerHTML = dl.length ? dl.map(d=>{
     const main = (d.contributions||[])[0];
-    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed #EDF1F7;font-size:12.5px">
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--grid);font-size:12.5px">
       <span class="mono" style="color:var(--txt-3);flex:0 0 78px">${dtStr(d.created_at)}</span>
       ${lvBadge(d.level)}
       <span class="mono" style="width:44px;text-align:right">${d.hi!=null?Number(d.hi).toFixed(1):'—'}</span>
@@ -1563,7 +1900,7 @@ async function renderAsset360(assetId){
   /* 关联工单 */
   $('a360-card-sub').textContent = `${cards.length} 张`;
   $('a360-cards').innerHTML = cards.length ? cards.map(c=>`
-    <div style="display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px dashed #EDF1F7;font-size:12.5px">
+    <div style="display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px dashed var(--grid);font-size:12.5px">
       <span class="mono" style="color:var(--accent)">${c.card_id}</span>
       <span class="badge ${c.verdict==='ACT_NOW'?'act':'mon'}">${c.verdict}</span>
       <span style="color:var(--txt-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.conclusion||''}</span>
@@ -1610,7 +1947,7 @@ function drawDonut(box, parts){
   const cx = W*0.34, cy = H/2, R = Math.min(W*0.28, H*0.38), w = 22;
   const total = parts.reduce((s,p)=>s+p.value,0) || 1;
   const C = 2*Math.PI*R;
-  let acc = 0, svg = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#EDF1F7" stroke-width="${w}"/>`;
+  let acc = 0, svg = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="var(--grid)" stroke-width="${w}"/>`;
   parts.forEach(p=>{
     if(!p.value) return;
     const len = (p.value/total)*C;
@@ -1620,7 +1957,7 @@ function drawDonut(box, parts){
     acc += len;
   });
   svg += `<text x="${cx}" y="${cy-4}" text-anchor="middle" font-size="20" font-weight="700"
-      fill="#0F172A" font-family="ui-monospace,monospace">${money(total)}</text>
+      fill="var(--txt)" font-family="ui-monospace,monospace">${money(total)}</text>
     <text x="${cx}" y="${cy+14}" text-anchor="middle" font-size="10.5" fill="#94A3B8">总成本 (元)</text>`;
   const legend = parts.map((p,i)=>{
     const pct = (p.value/total*100).toFixed(1);
@@ -1668,7 +2005,7 @@ async function renderCost(){
   $('cost-top').innerHTML = top.length ? top.map(x=>`
     <div style="display:flex;align-items:center;gap:11px;margin-bottom:13px">
       <span class="mono" style="width:96px;font-size:12.5px;font-weight:600">${x.asset_id}</span>
-      <div style="flex:1;height:9px;border-radius:5px;background:#EDF1F7;overflow:hidden">
+      <div style="flex:1;height:9px;border-radius:5px;background:var(--grid);overflow:hidden">
         <div style="height:100%;width:${Math.abs(x.net_benefit)/max*100}%;border-radius:5px;
           background:linear-gradient(90deg,#86EFAC,#16A34A)"></div></div>
       <span class="mono" style="width:72px;text-align:right;font-size:12.5px;color:var(--green)">
@@ -1769,9 +2106,9 @@ async function renderSystem(){
     const big = t.rows >= 1e6;
     return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
       <span class="mono" style="width:170px;font-size:12px;color:var(--txt-2)">${t.name}</span>
-      <div style="flex:1;height:7px;border-radius:4px;background:#EDF1F7;overflow:hidden">
+      <div style="flex:1;height:7px;border-radius:4px;background:var(--grid);overflow:hidden">
         <div style="height:100%;width:${pct}%;border-radius:4px;
-          background:${big?'linear-gradient(90deg,#A5B4FC,#4F46E5)':'#CBD5E1'}"></div></div>
+          background:${big?'linear-gradient(90deg,#A5B4FC,#4F46E5)':'var(--track-2)'}"></div></div>
       <span class="mono" style="width:88px;text-align:right;font-size:12px;
         color:${big?'var(--accent-2)':'var(--txt-2)'};font-weight:${big?600:400}">
         ${t.rows>=0 ? (t.exact===false?'≈':'') + t.rows.toLocaleString() : 'ERR'}</span>
@@ -1779,7 +2116,7 @@ async function renderSystem(){
   }).join('');
 
   const row = (k,v,ok) => `<div style="display:flex;align-items:center;gap:9px;padding:7px 0;
-      border-bottom:1px dashed #EDF1F7;font-size:12.5px">
+      border-bottom:1px dashed var(--grid);font-size:12.5px">
       <span style="color:var(--txt-3);width:110px">${k}</span>
       <span class="mono" style="color:${ok===false?'var(--red)':'var(--txt)'};flex:1">${v}</span></div>`;
 
@@ -1798,12 +2135,216 @@ async function renderSystem(){
     row('L2 启用', cache && cache.l2_enabled != null ? String(cache.l2_enabled) : '—');
 }
 
+
+/* =====================================================================
+   点检巡检 + 保养计划（技术债 #2）
+   ===================================================================== */
+
+/* 写操作权限：未登录时后端处于兼容模式（PDM_AUTH_REQUIRED=0），
+   前端保持一致；登录后严格按角色隐藏/禁用。 */
+function canDo(perm){
+  return !isLoggedIn() || can(perm);
+}
+function permHint(perm){
+  if(canDo(perm)) return '';
+  return ` title="当前角色无 ${perm} 权限，请用主管账号登录"`;
+}
+
+const INS = {status:'', q:'', tasks:[], current:null};
+
+async function renderInspections(){
+  const q = new URLSearchParams();
+  if(INS.status) q.set('status', INS.status);
+  q.set('limit', '200');
+  const [list, st] = await Promise.all([
+    api('/v1/inspections?' + q.toString()),
+    api('/v1/stats/inspection'),
+  ]);
+  let tasks = (list && list.tasks) || [];
+  if(INS.q){
+    const k = INS.q.toUpperCase();
+    tasks = tasks.filter(t => (t.asset_id || '').toUpperCase().includes(k));
+  }
+  INS.tasks = tasks;
+
+  const s = st || {};
+  $('ins-kpis').innerHTML = `
+    <div class="kpi ${s.overdue ? 'r' : 'g'}"><div class="l">逾期任务</div>
+      <div class="v">${s.overdue || 0}</div>
+      <div class="d">${s.overdue ? '需立即处理' : '无逾期'}</div></div>
+    <div class="kpi y"><div class="l">待执行</div><div class="v">${s.pending || 0}</div>
+      <div class="d">今日到期 ${s.due_today || 0}</div></div>
+    <div class="kpi g"><div class="l">已完成</div><div class="v">${s.done || 0}</div>
+      <div class="d">完成率 ${s.completion_pct || 0}%</div></div>
+    <div class="kpi ${s.ng_items ? 'o' : ''}"><div class="l">异常项</div>
+      <div class="v">${s.ng_items || 0}</div>
+      <div class="d">涉及 ${s.ng_tasks || 0} 个任务</div></div>
+    <div class="kpi"><div class="l">保养计划</div><div class="v">${s.plans || 0}</div>
+      <div class="d">已逾期 ${s.plan_overdue || 0} 条</div></div>`;
+
+  $('ins-count').textContent = `${tasks.length} 条`;
+  if(!tasks.length){
+    $('ins-rows').innerHTML = `<tr><td colspan="8">${emptyBox(
+      '暂无点检任务',
+      '点击右上「按计划生成任务」，按保养计划到期日批量生成。',
+      '<path d="M9 4h6M9 4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2"/>')}</td></tr>`;
+    return;
+  }
+
+  $('ins-rows').innerHTML = tasks.map(t => {
+    const done = t.status === 'DONE';
+    const left = t.hours_left;
+    const leftTxt = done ? '—'
+      : (t.overdue ? `逾期 ${Math.abs(left).toFixed(0)}h`
+                   : `剩 ${left >= 24 ? (left / 24).toFixed(1) + ' 天' : left.toFixed(0) + ' 小时'}`);
+    const leftColor = done ? 'var(--txt-3)'
+      : (t.overdue ? 'var(--red)' : (left < 24 ? 'var(--orange)' : 'var(--txt-2)'));
+    const stBadge = done ? '<span class="badge ok">已完成</span>'
+      : (t.overdue ? '<span class="badge act">已逾期</span>' : '<span class="badge mon">待执行</span>');
+    const result = done
+      ? (t.ng_count ? `<span style="color:var(--red);font-weight:600">${t.ng_count} 项异常</span>`
+                    : '<span style="color:var(--green)">全部正常</span>')
+      : '<span style="color:var(--txt-3)">—</span>';
+    return `<tr>
+      <td class="mono" style="font-size:11.5px;white-space:nowrap">${t.task_id}</td>
+      <td><b class="mono">${t.asset_id}</b></td>
+      <td style="max-width:260px;font-size:12.5px;color:var(--txt-2)">
+        ${(t.title || '').replace(t.asset_id, '').replace(/[（）()]/g, '') || '例行点检'}
+        <div style="font-size:11px;color:var(--txt-3)">${(t.items || []).length} 个检查项</div></td>
+      <td class="mono" style="font-size:12px;white-space:nowrap">${dtStr(t.due_at)}</td>
+      <td style="color:${leftColor};font-weight:600;font-size:12px;white-space:nowrap">${leftTxt}</td>
+      <td>${stBadge}</td>
+      <td>${result}</td>
+      <td style="text-align:right;white-space:nowrap">
+        ${done ? `<span style="font-size:11.5px;color:var(--txt-3)">${t.done_by || ''}</span>`
+               : `<button class="btn sm ${canDo('inspect.execute') ? '' : 'dis'}"
+                    data-ins="${t.task_id}"${permHint('inspect.execute')}>执行</button>`}
+      </td></tr>`;
+  }).join('');
+}
+
+function openInspect(taskId){
+  const t = INS.tasks.find(x => x.task_id === taskId);
+  if(!t) return;
+  INS.current = t;
+  $('ins-m-title').textContent = '执行点检 · ' + t.asset_id;
+  const tag = $('ins-m-tag');
+  tag.textContent = t.overdue ? '已逾期' : '待执行';
+  tag.className = 'badge ' + (t.overdue ? 'act' : 'mon');
+  $('ins-m-sub').textContent = `${t.task_id} · 到期 ${dtStr(t.due_at)} · 责任人 ${t.assignee_role || 'operator'}`;
+  $('ins-m-items').innerHTML = (t.items || []).map(i => `
+    <div class="ins-item" data-key="${i.key}" data-label="${i.label || i.key}">
+      <div class="nm">${i.label || i.key}</div>
+      <div class="std">标准 ${i.std || '—'}</div>
+      <input class="val" placeholder="读数">
+      <div class="seg2">
+        <button class="ok on" data-j="OK">正常</button>
+        <button class="ng" data-j="NG">异常</button>
+      </div>
+    </div>`).join('') || emptyBox('无检查项', '该保养计划未配置检查项。');
+  $('ins-m-note').value = '';
+  $('ins-mask').classList.add('on');
+}
+
+async function submitInspect(){
+  const t = INS.current;
+  if(!t) return;
+  const items = [...$('ins-m-items').querySelectorAll('.ins-item')].map(el => ({
+    key: el.dataset.key,
+    label: el.dataset.label,
+    value: (el.querySelector('.val') || {}).value || '',
+    judgment: (el.querySelector('.seg2 .on') || {}).dataset
+      ? el.querySelector('.seg2 .on').dataset.j : 'OK',
+  }));
+  const btn = $('ins-m-submit');
+  btn.disabled = true; btn.textContent = '提交中…';
+  const r = await api(`/v1/inspections/${encodeURIComponent(t.task_id)}/submit`,
+    {method:'POST', body:JSON.stringify({items, note:$('ins-m-note').value.trim()})});
+  btn.disabled = false; btn.textContent = '提交点检结果';
+  if(r && r.status === 'DONE'){
+    $('ins-mask').classList.remove('on');
+    toast(r.ng_count ? `点检完成：${r.ng_count} 项异常，建议开异常工单`
+                     : '点检完成：全部正常');
+    renderInspections();
+  }else{
+    toast('提交失败：' + ((r && (r.detail || r._raw)) || '未知错误'));
+  }
+}
+
+const PLN = {q:'', due:'', rows:[]};
+
+async function renderPlans(){
+  const [list, st] = await Promise.all([
+    api('/v1/plans?limit=300'),
+    api('/v1/stats/inspection'),
+  ]);
+  let rows = (list && list.plans) || [];
+  PLN.rows = rows;
+
+  /* 注意口径：rows 受展示上限（300）约束，而库中计划共 1200 条。
+     计划总数与逾期数必须取汇总接口的真实值，否则 300 会被误读成"总共只有 300 条"。 */
+  const shown = rows.length;
+  const total = (st && st.plans != null) ? st.plans : shown;
+  const overdue = (st && st.plan_overdue != null) ? st.plan_overdue : rows.filter(p => p.overdue).length;
+  const due7 = rows.filter(p => !p.overdue && p.days_left != null && p.days_left <= 7).length;
+  const cycles = rows.map(p => p.cycle_days).filter(Boolean);
+  const avgCycle = cycles.length ? (cycles.reduce((a,b)=>a+b,0) / cycles.length).toFixed(0) : '—';
+
+  $('plan-kpis').innerHTML = `
+    <div class="kpi c"><div class="l">计划总数</div><div class="v">${total}</div>
+      <div class="d">当前展示 ${shown} 条（按到期排序）</div></div>
+    <div class="kpi ${overdue ? 'r' : 'g'}"><div class="l">已逾期</div><div class="v">${overdue}</div>
+      <div class="d">${overdue ? '需重新排程' : '全部按期'}</div></div>
+    <div class="kpi o"><div class="l">7 天内到期</div><div class="v">${due7}</div>
+      <div class="d">待安排执行</div></div>
+    <div class="kpi"><div class="l">平均周期</div><div class="v">${avgCycle}</div>
+      <div class="d">天 · 按关键度分级</div></div>
+    <div class="kpi"><div class="l">点检任务</div><div class="v">${(st && st.pending) || 0}</div>
+      <div class="d">待执行 / 已完成 ${(st && st.done) || 0}</div></div>`;
+
+  if(PLN.q){
+    const k = PLN.q.toUpperCase();
+    rows = rows.filter(p => (p.plan_id + p.asset_id + (p.name || '')).toUpperCase().includes(k));
+  }
+  if(PLN.due === 'overdue') rows = rows.filter(p => p.overdue);
+  else if(PLN.due) rows = rows.filter(p => !p.overdue && p.days_left != null && p.days_left <= Number(PLN.due));
+
+  $('plan-count').textContent = `${rows.length} 条`;
+  if(!rows.length){
+    $('plan-rows').innerHTML = `<tr><td colspan="9">${emptyBox(
+      '没有匹配的保养计划', '清空筛选条件再试。',
+      '<circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/>')}</td></tr>`;
+    return;
+  }
+
+  $('plan-rows').innerHTML = rows.map(p => {
+    const left = p.days_left;
+    const leftTxt = left == null ? '—'
+      : (left < 0 ? `逾期 ${Math.abs(left).toFixed(1)} 天`
+                  : `${left.toFixed(1)} 天`);
+    const leftColor = left == null ? 'var(--txt-3)'
+      : (left < 0 ? 'var(--red)' : (left <= 3 ? 'var(--orange)' : 'var(--txt-2)'));
+    return `<tr>
+      <td class="mono" style="font-size:11.5px">${p.plan_id}</td>
+      <td><b class="mono">${p.asset_id}</b></td>
+      <td style="font-size:12.5px;color:var(--txt-2);max-width:220px">${p.name || '—'}</td>
+      <td class="mono">${p.cycle_days} 天</td>
+      <td class="mono" style="font-size:12px;color:var(--txt-3)">${dtStr(p.last_done_at)}</td>
+      <td class="mono" style="font-size:12px">${dtStr(p.next_due_at)}</td>
+      <td style="color:${leftColor};font-weight:600;font-size:12px;white-space:nowrap">${leftTxt}</td>
+      <td class="mono" style="color:var(--txt-3)">${p.item_count || 0}</td>
+      <td style="text-align:right"><button class="btn sm" data-asset360="${p.asset_id}">设备</button></td>
+    </tr>`;
+  }).join('');
+}
+
 /* ===== 启动 =====
    两段式：先立即渲染当前视图（各视图自行拉所需数据），
    再后台加载共享缓存 S.assets / S.cards，就绪后重绘一次。
    原因：list_hot_assets(300) 需 4–5s，若阻塞则首屏白屏。 */
 let sharedReady = false;
 (async function(){
+  refreshUserLabel();
   route();                       // 首屏立即出内容
   try{
     await loadAll();

@@ -501,18 +501,24 @@ def sync_alerts(tenant_id: str, threshold_hi: float = 70.0,
 def list_alerts(tenant_id: str, status: str = "", level: str = "",
                 limit: int = 100) -> list[dict[str, Any]]:
     """告警列表，按 SLA 剩余时间升序（超时优先）。"""
-    sql = ("SELECT alert_id, asset_id, level, rule_id, message, action_hint, owner_role, "
-           "sla_hours, status, ack_by, ack_action, created_at, escalated_at "
-           "FROM alert WHERE tenant_id=%s")
+    # 左连接健康表带出 RUL，便于按"还有几天到期"判断优先级
+    sql = ("SELECT a.alert_id AS alert_id, a.asset_id AS asset_id, a.level AS level, "
+           "a.rule_id AS rule_id, a.message AS message, a.action_hint AS action_hint, "
+           "a.owner_role AS owner_role, a.sla_hours AS sla_hours, a.status AS status, "
+           "a.ack_by AS ack_by, a.ack_action AS ack_action, a.created_at AS created_at, "
+           "a.escalated_at AS escalated_at, h.rul_p50_days AS rul_days "
+           "FROM alert a LEFT JOIN read_asset_health h "
+           "ON a.tenant_id=h.tenant_id AND a.asset_id=h.asset_id "
+           "WHERE a.tenant_id=%s")
     params: list[Any] = []
     if status:
         marks = ",".join(["%s"] * len(status.split(",")))
-        sql += f" AND status IN ({marks})"
+        sql += f" AND a.status IN ({marks})"
         params.extend(status.split(","))
     if level:
-        sql += " AND level=%s"
+        sql += " AND a.level=%s"
         params.append(level)
-    sql += " ORDER BY created_at DESC LIMIT %s"
+    sql += " ORDER BY a.created_at DESC LIMIT %s"
     params.append(limit)
 
     # pymysql 的 fetchall() 返回 tuple，需转 list 才能排序
@@ -735,8 +741,34 @@ def org_tree(tenant_id: str) -> list[dict[str, Any]]:
             "asset_count": agg["total"],
             "levels": {k: agg[k] for k in ("red", "orange", "yellow", "green", "none")},
         })
-    out.sort(key=lambda x: (x["depth"], x["node_id"]))
-    return out
+
+    # 按父子关系 DFS 输出：若只按 (depth, node_id) 排序，会变成
+    # 「所有车间 → 所有产线」，父子被拆散，树形缩进失去意义（实测踩到）。
+    by_id = {r["node_id"]: r for r in out}
+    kids: dict[str, list[str]] = {}
+    for r in out:
+        pid = r.get("parent_id") or ""
+        if pid and pid in by_id:
+            kids.setdefault(pid, []).append(r["node_id"])
+
+    ordered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def walk(nid: str) -> None:
+        if nid in seen:
+            return
+        seen.add(nid)
+        ordered.append(by_id[nid])
+        for c in sorted(kids.get(nid, [])):
+            walk(c)
+
+    for r in sorted(out, key=lambda x: x["node_id"]):
+        if not (r.get("parent_id") or "") or r["parent_id"] not in by_id:
+            walk(r["node_id"])
+    for r in sorted(out, key=lambda x: x["node_id"]):
+        walk(r["node_id"])
+
+    return ordered
 
 
 # ---------------------------------------------------------------------------
@@ -778,3 +810,376 @@ def system_stats(tenant_id: str) -> dict[str, Any]:
                 out.append({"name": t, "rows": guess if guess is not None else -1,
                             "exact": False, "error": str(exc)[:60]})
     return {"tables": out}
+
+
+# ---------------------------------------------------------------------------
+# RUL 剩余寿命估算（技术债 #3）
+# ---------------------------------------------------------------------------
+def estimate_rul(tenant_id: str, asset_id: str, critical_hi: float = 40.0,
+                 min_points: int = 3, lookback_days: int = 30) -> dict[str, Any]:
+    """用健康历史线性外推估算剩余寿命（天）。
+
+    不做黑盒预测，只用可解释的线性外推：
+        rul_days = (hi_now - critical_hi) / (-slope_per_day)
+
+    边界（不臆造）：
+    - 历史点 < min_points → 返回 None（样本不足）
+    - 斜率 >= -0.01（基本无劣化）→ 返回 None（无劣化趋势）
+    - 当前 HI 已 <= 临界线 → 返回 0（已到期）
+    """
+    since = datetime.datetime.now() - datetime.timedelta(days=lookback_days)
+    rows = (
+        TenantQueryBuilder(tenant_id)
+        .query(
+            "SELECT hi, ts FROM read_asset_health_history "
+            "WHERE tenant_id=%s AND asset_id=%s AND ts >= %s ORDER BY ts ASC",
+            asset_id, since,
+        )
+        .fetchall()
+    )
+    pts = [(r["ts"], float(r["hi"])) for r in rows if r.get("hi") is not None]
+    if len(pts) < min_points:
+        return {"asset_id": asset_id, "rul_days": None, "reason": "insufficient_history",
+                "points": len(pts)}
+
+    t0 = pts[0][0]
+    xs = [(t - t0).total_seconds() / 86400.0 for t, _ in pts]
+    ys = [v for _, v in pts]
+    n = len(xs)
+    mx, my = sum(xs) / n, sum(ys) / n
+    den = sum((x - mx) ** 2 for x in xs)
+    if den <= 1e-9:
+        return {"asset_id": asset_id, "rul_days": None, "reason": "flat_history",
+                "points": n}
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den
+
+    hi_now = ys[-1]
+    if hi_now <= critical_hi:
+        return {"asset_id": asset_id, "rul_days": 0.0, "reason": "already_critical",
+                "points": n, "hi_now": round(hi_now, 2), "slope_per_day": round(slope, 3)}
+    if slope >= -0.01:
+        return {"asset_id": asset_id, "rul_days": None, "reason": "no_degradation",
+                "points": n, "hi_now": round(hi_now, 2), "slope_per_day": round(slope, 3)}
+
+    rul = (hi_now - critical_hi) / (-slope)
+    return {"asset_id": asset_id, "rul_days": round(rul, 1), "reason": "estimated",
+            "points": n, "hi_now": round(hi_now, 2), "slope_per_day": round(slope, 3)}
+
+
+def refresh_rul(tenant_id: str, critical_hi: float = 40.0) -> dict[str, Any]:
+    """批量估算并写回 read_asset_health.rul_p50_days。"""
+    assets = (
+        TenantQueryBuilder(tenant_id)
+        .query("SELECT asset_id FROM read_asset_health WHERE tenant_id=%s")
+        .fetchall()
+    )
+    updated = skipped = 0
+    with connect() as conn, conn.cursor() as cur:
+        for a in assets:
+            est = estimate_rul(tenant_id, a["asset_id"], critical_hi)
+            if est["rul_days"] is None:
+                skipped += 1
+                continue
+            cur.execute(
+                "UPDATE read_asset_health SET rul_p50_days=%s "
+                "WHERE tenant_id=%s AND asset_id=%s",
+                (est["rul_days"], tenant_id, a["asset_id"]),
+            )
+            updated += 1
+    return {"updated": updated, "skipped": skipped, "total": len(assets)}
+
+
+# ---------------------------------------------------------------------------
+# 用户与角色（技术债 #4）
+# ---------------------------------------------------------------------------
+def get_user(tenant_id: str, username: str) -> dict[str, Any] | None:
+    return (
+        TenantQueryBuilder(tenant_id)
+        .query("SELECT username, role, display_name, password_hash, enabled "
+               "FROM app_user WHERE tenant_id=%s AND username=%s", username)
+        .fetchone()
+    )
+
+
+def list_users(tenant_id: str) -> list[dict[str, Any]]:
+    return list(
+        TenantQueryBuilder(tenant_id)
+        .query("SELECT username, role, display_name, enabled, created_at "
+               "FROM app_user WHERE tenant_id=%s ORDER BY role, username")
+        .fetchall()
+    )
+
+
+# ---------------------------------------------------------------------------
+# 点检巡检 + 保养计划（技术债 #2）
+# ---------------------------------------------------------------------------
+def list_plans(tenant_id: str, limit: int = 200) -> list[dict[str, Any]]:
+    """保养计划列表，按下次到期时间升序（逾期优先）。"""
+    import json
+
+    rows = list(
+        TenantQueryBuilder(tenant_id)
+        .query(
+            "SELECT plan_id, asset_id, name, cycle_days, items, owner_role, "
+            "last_done_at, next_due_at, enabled FROM maintenance_plan "
+            "WHERE tenant_id=%s ORDER BY next_due_at ASC LIMIT %s",
+            limit,
+        )
+        .fetchall()
+    )
+    now = datetime.datetime.now()
+    for r in rows:
+        if isinstance(r.get("items"), str):
+            try:
+                r["items"] = json.loads(r["items"])
+            except Exception:  # noqa: BLE001
+                r["items"] = []
+        due = r.get("next_due_at")
+        if isinstance(due, datetime.datetime):
+            secs = (due - now).total_seconds()
+            r["days_left"] = round(secs / 86400, 1)
+            # 用原始秒判断，避免 -0.0 这类四舍五入后既不为负也不为零的边界
+            r["overdue"] = secs < 0
+        else:
+            r["days_left"] = None
+            r["overdue"] = False
+        r["item_count"] = len(r.get("items") or [])
+    return rows
+
+
+def generate_inspections(tenant_id: str, days: int = 7,
+                         limit: int = 100) -> dict[str, Any]:
+    """从保养计划生成点检任务（幂等）。
+
+    幂等键：(plan_id, due 日期)。同一计划同一到期日只建一条任务。
+    限量原因：库中 1200 台设备，若全量生成会瞬间灌入上千条任务，
+    对车间级使用无意义。按到期时间升序取前 limit 条。
+    """
+    import json
+
+    now = datetime.datetime.now()
+    horizon = now + datetime.timedelta(days=days)
+    plans = list(
+        TenantQueryBuilder(tenant_id)
+        .query(
+            "SELECT plan_id, asset_id, name, items, owner_role, next_due_at, cycle_days "
+            "FROM maintenance_plan WHERE tenant_id=%s AND enabled=1 "
+            "AND next_due_at IS NOT NULL AND next_due_at <= %s "
+            "ORDER BY next_due_at ASC LIMIT %s",
+            horizon, limit,
+        )
+        .fetchall()
+    )
+
+    created = skipped = 0
+    with connect() as conn, conn.cursor() as cur:
+        for p in plans:
+            due = p["next_due_at"]
+            if not isinstance(due, datetime.datetime):
+                skipped += 1
+                continue
+            # 幂等：同计划同到期日已存在未完成任务则跳过
+            cur.execute(
+                "SELECT task_id FROM inspection_task WHERE tenant_id=%s AND plan_id=%s "
+                "AND DATE(due_at)=DATE(%s) AND status IN ('PENDING','OVERDUE') LIMIT 1",
+                (tenant_id, p["plan_id"], due),
+            )
+            if cur.fetchone():
+                skipped += 1
+                continue
+
+            items = p.get("items")
+            if isinstance(items, str):
+                try:
+                    items = json.loads(items)
+                except Exception:  # noqa: BLE001
+                    items = []
+            task_id = f"INS-{due:%Y%m%d}-{os.urandom(3).hex().upper()}"
+            cur.execute(
+                "INSERT INTO inspection_task(tenant_id,task_id,plan_id,asset_id,title,items,"
+                "due_at,status,assignee_role,created_at) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,'PENDING',%s,%s)",
+                (tenant_id, task_id, p["plan_id"], p["asset_id"],
+                 f"{p['name']}（{p['asset_id']}）", json.dumps(items or [], ensure_ascii=False),
+                 due, p.get("owner_role") or "operator", now),
+            )
+            created += 1
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM inspection_task WHERE tenant_id=%s "
+            "AND status IN ('PENDING','OVERDUE')", (tenant_id,))
+        open_cnt = cur.fetchone()["n"]
+
+    return {"created": created, "skipped": skipped,
+            "candidates": len(plans), "open_total": open_cnt}
+
+
+def list_inspections(tenant_id: str, status: str = "", asset_id: str = "",
+                     limit: int = 100) -> list[dict[str, Any]]:
+    """点检任务列表。逾期未完成的按 due 升序置顶。"""
+    import json
+
+    sql = ("SELECT task_id, plan_id, asset_id, title, items, due_at, status, "
+           "assignee_role, done_at, done_by, ng_count, note, created_at "
+           "FROM inspection_task WHERE tenant_id=%s")
+    params: list[Any] = []
+    if status:
+        marks = ",".join(["%s"] * len(status.split(",")))
+        sql += f" AND status IN ({marks})"
+        params.extend(status.split(","))
+    if asset_id:
+        sql += " AND asset_id LIKE %s"
+        params.append(f"{asset_id}%")
+    sql += " ORDER BY due_at ASC LIMIT %s"
+    params.append(limit)
+
+    rows = list(TenantQueryBuilder(tenant_id).query(sql, *params).fetchall())
+    now = datetime.datetime.now()
+    for r in rows:
+        if isinstance(r.get("items"), str):
+            try:
+                r["items"] = json.loads(r["items"])
+            except Exception:  # noqa: BLE001
+                r["items"] = []
+        due = r.get("due_at")
+        if isinstance(due, datetime.datetime):
+            r["hours_left"] = round((due - now).total_seconds() / 3600, 1)
+            # 只读展示：PENDING 且已过期即视为逾期，不改库（避免读接口写数据）
+            r["overdue"] = r["status"] == "PENDING" and r["hours_left"] < 0
+        else:
+            r["hours_left"] = None
+            r["overdue"] = False
+    rows.sort(key=lambda x: (0 if x.get("overdue") else (1 if x["status"] == "PENDING" else 2),
+                             x.get("hours_left") if x.get("hours_left") is not None else 9e9))
+    return rows
+
+
+def submit_inspection(tenant_id: str, task_id: str, items: list[dict[str, Any]],
+                      by: str, note: str = "") -> dict[str, Any]:
+    """提交点检结果：写结果、算 NG 数、推进保养计划到期日。"""
+    import json
+
+    row = (
+        TenantQueryBuilder(tenant_id)
+        .query("SELECT task_id, plan_id, status, items FROM inspection_task "
+               "WHERE tenant_id=%s AND task_id=%s", task_id)
+        .fetchone()
+    )
+    if row is None:
+        raise ValueError(f"task not found: {task_id}")
+    if row["status"] == "DONE":
+        raise ValueError("task already done")
+
+    plan_items = row.get("items")
+    if isinstance(plan_items, str):
+        try:
+            plan_items = json.loads(plan_items)
+        except Exception:  # noqa: BLE001
+            plan_items = []
+    expect = {str(i.get("key")): i for i in (plan_items or [])}
+
+    results: list[dict[str, Any]] = []
+    ng = 0
+    for it in items or []:
+        key = str(it.get("key") or "")
+        base = expect.get(key, {})
+        judgment = str(it.get("judgment") or "OK").upper()
+        if judgment not in ("OK", "NG"):
+            raise ValueError(f"invalid judgment: {judgment}")
+        if judgment == "NG":
+            ng += 1
+        results.append({
+            "key": key,
+            "label": it.get("label") or base.get("label") or key,
+            "std": base.get("std"),
+            "value": it.get("value"),
+            "judgment": judgment,
+            "note": it.get("note") or "",
+        })
+
+    now = datetime.datetime.now()
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE inspection_task SET status='DONE', items=%s, done_at=%s, done_by=%s, "
+            "ng_count=%s, note=%s WHERE tenant_id=%s AND task_id=%s",
+            (json.dumps(results, ensure_ascii=False), now, by, ng, note[:255], tenant_id, task_id),
+        )
+        # 推进保养计划：以本次完成为起点重算下次到期
+        if row.get("plan_id"):
+            cur.execute(
+                "SELECT cycle_days FROM maintenance_plan WHERE tenant_id=%s AND plan_id=%s",
+                (tenant_id, row["plan_id"]),
+            )
+            p = cur.fetchone()
+            if p and p.get("cycle_days"):
+                nxt = now + datetime.timedelta(days=int(p["cycle_days"]))
+                cur.execute(
+                    "UPDATE maintenance_plan SET last_done_at=%s, next_due_at=%s "
+                    "WHERE tenant_id=%s AND plan_id=%s",
+                    (now, nxt, tenant_id, row["plan_id"]),
+                )
+
+    return {"task_id": task_id, "status": "DONE", "ng_count": ng,
+            "done_by": by, "done_at": now.isoformat(timespec="seconds"),
+            "results": results}
+
+
+def inspection_stats(tenant_id: str) -> dict[str, Any]:
+    """点检汇总：状态分布、今日到期、NG 率、计划覆盖。
+
+    时间一律由 Python 传入，不用 SQL 的 NOW()/CURDATE()：
+    本库时区为 UTC，与应用进程本地时区（UTC+8）相差 8 小时，
+    用数据库时间会把"今天到期"算到前一天（实测踩到）。
+    """
+    now = datetime.datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow = today_start + datetime.timedelta(days=1)
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT status, COUNT(*) AS n FROM inspection_task WHERE tenant_id=%s "
+            "GROUP BY status", (tenant_id,))
+        by_status = {r["status"]: int(r["n"]) for r in cur.fetchall()}
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM inspection_task WHERE tenant_id=%s "
+            "AND status='PENDING' AND due_at < %s", (tenant_id, now))
+        overdue = int(cur.fetchone()["n"])
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM inspection_task WHERE tenant_id=%s "
+            "AND due_at >= %s AND due_at < %s", (tenant_id, today_start, tomorrow))
+        today = int(cur.fetchone()["n"])
+
+        cur.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(ng_count),0) AS ng, "
+            "COALESCE(SUM(CASE WHEN ng_count > 0 THEN 1 ELSE 0 END),0) AS ngt "
+            "FROM inspection_task WHERE tenant_id=%s AND status='DONE'", (tenant_id,))
+        r = cur.fetchone()
+        done = int(r["n"] or 0)
+        ng_items = int(r["ng"] or 0)
+        ng_tasks = int(r["ngt"] or 0)
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM maintenance_plan WHERE tenant_id=%s AND enabled=1",
+            (tenant_id,))
+        plans = int(cur.fetchone()["n"])
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM maintenance_plan WHERE tenant_id=%s "
+            "AND enabled=1 AND next_due_at < %s", (tenant_id, now))
+        plan_overdue = int(cur.fetchone()["n"])
+
+    return {
+        "by_status": by_status,
+        "pending": by_status.get("PENDING", 0),
+        "done": done,
+        "overdue": overdue,
+        "due_today": today,
+        "ng_tasks": ng_tasks,
+        "ng_items": ng_items,
+        "plans": plans,
+        "plan_overdue": plan_overdue,
+        "completion_pct": round(100 * done / (done + by_status.get("PENDING", 0)), 1)
+                          if (done + by_status.get("PENDING", 0)) else 0.0,
+    }

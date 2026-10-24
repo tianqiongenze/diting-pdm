@@ -25,6 +25,7 @@ from litestar.response import Response
 from litestar.exceptions import HTTPException
 from litestar.status_codes import HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND, HTTP_409_CONFLICT, HTTP_422_UNPROCESSABLE_ENTITY
 
+from . import auth as auth_mod
 from . import decision, domain, events, integration, repository
 from .cache import MultiLevelCache, build_l2
 from .schemas import DiagnoseRequest, Metrics
@@ -351,6 +352,15 @@ async def ack_alert_endpoint(request: Request, alert_id: str) -> dict[str, Any]:
     action = str(payload.get("action", "ack"))
     by = str(payload.get("by") or "unknown")
     comment = str(payload.get("comment") or "")
+    # 权限：ack → alert.ack，escalate → alert.escalate，close → alert.close
+    perm = {"ack": "alert.ack", "escalate": "alert.escalate",
+            "close": "alert.close"}.get(action, "alert.ack")
+    try:
+        ident = auth_mod.require(request.headers.get("X-Auth-Token"), perm)
+        if ident:
+            by = ident["sub"]
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     try:
         return await asyncio.to_thread(repository.ack_alert, tenant, alert_id, action, by, comment)
     except ValueError as exc:
@@ -388,6 +398,167 @@ async def org_tree_endpoint(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
     nodes = await asyncio.to_thread(repository.org_tree, tenant)
     return {"tenant_id": tenant, "count": len(nodes), "nodes": nodes}
+
+
+@get("/v1/plans")
+async def list_plans_endpoint(request: Request, limit: int = 200) -> dict[str, Any]:
+    """保养计划列表。技术债 #2。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    rows = await asyncio.to_thread(repository.list_plans, tenant, limit)
+    return {"tenant_id": tenant, "count": len(rows), "plans": rows}
+
+
+@post("/v1/inspections/generate", status_code=200)
+async def generate_inspections_endpoint(request: Request) -> dict[str, Any]:
+    """按保养计划生成点检任务（幂等）。需 plan.edit 权限。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        auth_mod.require(request.headers.get("X-Auth-Token"), "plan.edit")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    res = await asyncio.to_thread(repository.generate_inspections, tenant,
+                                 int(payload.get("days", 7)), int(payload.get("limit", 100)))
+    return {"tenant_id": tenant, **res}
+
+
+@get("/v1/inspections")
+async def list_inspections_endpoint(request: Request, status: str = "",
+                                    asset_id: str = "", limit: int = 100) -> dict[str, Any]:
+    """点检任务列表，逾期优先。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    rows = await asyncio.to_thread(repository.list_inspections, tenant, status, asset_id, limit)
+    return {"tenant_id": tenant, "count": len(rows), "tasks": rows}
+
+
+@post("/v1/inspections/{task_id:str}/submit", status_code=200)
+async def submit_inspection_endpoint(request: Request, task_id: str) -> dict[str, Any]:
+    """提交点检结果。需 inspect.execute 权限。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    by = "unknown"
+    try:
+        ident = auth_mod.require(request.headers.get("X-Auth-Token"), "inspect.execute")
+        if ident:
+            by = ident["sub"]
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    if not payload.get("by"):
+        payload["by"] = by
+    try:
+        return await asyncio.to_thread(repository.submit_inspection, tenant, task_id,
+                                      payload.get("items") or [],
+                                      str(payload.get("by") or "unknown"),
+                                      str(payload.get("note") or ""))
+    except ValueError as exc:
+        msg = str(exc)
+        code = HTTP_404_NOT_FOUND if "not found" in msg else HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=code, detail=msg) from exc
+
+
+@get("/v1/stats/inspection")
+async def inspection_stats_endpoint(request: Request) -> dict[str, Any]:
+    """点检与保养汇总。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    data = await asyncio.to_thread(repository.inspection_stats, tenant)
+    return {"tenant_id": tenant, **data}
+
+
+@post("/v1/auth/login", status_code=200)
+async def login_endpoint(request: Request) -> dict[str, Any]:
+    """登录签发 token。技术债 #4。"""
+    tenant = request.headers.get("X-Tenant-Id") or "site-a"
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    username = str(payload.get("username") or "")
+    password = str(payload.get("password") or "")
+    if not username or not password:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST,
+                            detail="username and password required")
+    user = await asyncio.to_thread(repository.get_user, tenant, username)
+    if not user or not user.get("enabled"):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    if not auth_mod.verify_password(password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    tok = auth_mod.issue_token(username, user["role"], tenant)
+    return {"tenant_id": tenant, "username": username,
+            "role": user["role"], "display_name": user.get("display_name"),
+            "role_label": auth_mod.ROLE_LABELS.get(user["role"], user["role"]),
+            "permissions": sorted(auth_mod.PERMISSIONS.get(user["role"], set())),
+            **tok}
+
+
+@get("/v1/auth/me")
+async def me_endpoint(request: Request) -> dict[str, Any]:
+    """校验 token 并返回当前身份。"""
+    token = (request.headers.get("X-Auth-Token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录")
+    try:
+        payload = auth_mod.decode_token(token)
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return {**payload,
+            "role_label": auth_mod.ROLE_LABELS.get(payload.get("role", ""), ""),
+            "permissions": sorted(auth_mod.PERMISSIONS.get(payload.get("role", ""), set()))}
+
+
+@get("/v1/users")
+async def list_users_endpoint(request: Request) -> dict[str, Any]:
+    """用户列表（需 user.view 权限）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        auth_mod.require(request.headers.get("X-Auth-Token"), "user.view")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    rows = await asyncio.to_thread(repository.list_users, tenant)
+    return {"tenant_id": tenant, "count": len(rows), "users": rows}
+
+
+@get("/v1/assets/{asset_id:str}/rul")
+async def asset_rul_endpoint(request: Request, asset_id: str,
+                             critical_hi: float = 40.0) -> dict[str, Any]:
+    """单设备剩余寿命估算（线性外推，可解释）。技术债 #3。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    est = await asyncio.to_thread(repository.estimate_rul, tenant, asset_id, critical_hi)
+    return {"tenant_id": tenant, **est}
+
+
+@post("/v1/rul/refresh", status_code=200)
+async def rul_refresh_endpoint(request: Request) -> dict[str, Any]:
+    """批量重算 RUL 并写回 read_asset_health。供 CronJob 调用。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    res = await asyncio.to_thread(repository.refresh_rul, tenant,
+                                 float(payload.get("critical_hi", 40)))
+    return {"tenant_id": tenant, **res}
 
 
 @get("/v1/stats/system")
@@ -541,7 +712,11 @@ app = Litestar(
     route_handlers=[healthz, version, cache_stats, events_stats, integration_stats, asset_trend, warmup_endpoint, diagnose_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard, screen_page, console_page,
                    sync_alerts_endpoint, list_alerts_endpoint, ack_alert_endpoint,
                    list_diagnoses_endpoint, cost_stats_endpoint, org_tree_endpoint,
-                   system_stats_endpoint],
+                   system_stats_endpoint, asset_rul_endpoint, rul_refresh_endpoint,
+                   login_endpoint, me_endpoint, list_users_endpoint,
+                   list_plans_endpoint, generate_inspections_endpoint,
+                   list_inspections_endpoint, submit_inspection_endpoint,
+                   inspection_stats_endpoint],
     on_startup=[_on_startup],
     debug=os.getenv("PDM_ENV", "prod") != "prod",
 )

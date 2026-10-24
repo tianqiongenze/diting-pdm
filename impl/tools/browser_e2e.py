@@ -569,6 +569,233 @@ def test_extended(pw) -> None:
     browser.close()
 
 
+
+# ---------------------------------------------------------------------------
+# F. 认证与角色（RBAC）+ 点检巡检 + 保养计划
+# ---------------------------------------------------------------------------
+def test_ops_and_auth(pw) -> None:
+    print("\n===== F1. 认证与角色（API）=====", flush=True)
+    c = httpx.Client(base_url=API, timeout=40,
+                     headers={"X-Tenant-Id": "site-a", "Host": INGRESS_HOST},
+                     limits=httpx.Limits(max_keepalive_connections=0))
+
+    r = c.post("/v1/auth/login", json={"username": "admin", "password": "Admin@2026"})
+    d = r.json() if r.status_code == 200 else {}
+    tok = d.get("token", "")
+    check("F1.1 主管登录", r.status_code == 200 and d.get("role") == "manager",
+          f"HTTP {r.status_code} role={d.get('role')}")
+    check("F1.2 登录返回权限集", len(d.get("permissions") or []) >= 8,
+          f"{len(d.get('permissions') or [])} 项")
+
+    r = c.post("/v1/auth/login", json={"username": "admin", "password": "wrong"})
+    check("F1.3 错误密码 401", r.status_code == 401, f"HTTP {r.status_code}")
+
+    r = c.get("/v1/auth/me", headers={"X-Auth-Token": tok})
+    check("F1.4 token 校验", r.status_code == 200 and r.json().get("sub") == "admin",
+          f"HTTP {r.status_code}")
+
+    bad_tok = tok[:-4] + "AAAA"
+    r = c.get("/v1/auth/me", headers={"X-Auth-Token": bad_tok})
+    check("F1.5 篡改 token 被拒", r.status_code == 401, f"HTTP {r.status_code}")
+
+    r = c.get("/v1/users", headers={"X-Auth-Token": tok})
+    check("F1.6 主管可查用户", r.status_code == 200 and r.json().get("count", 0) >= 3,
+          f"count={r.json().get('count') if r.status_code == 200 else '-'}")
+
+    ro = c.post("/v1/auth/login", json={"username": "op_li", "password": "Oper@2026"})
+    optok = ro.json().get("token", "") if ro.status_code == 200 else ""
+    check("F1.7 值班员登录", bool(optok), f"role={ro.json().get('role') if ro.status_code==200 else ro.status_code}")
+
+    r = c.get("/v1/users", headers={"X-Auth-Token": optok})
+    check("F1.8 值班员越权查用户 403", r.status_code == 403, f"HTTP {r.status_code}")
+
+    print("\n===== F2. 点检与保养（API）=====", flush=True)
+    r = c.get("/v1/plans?limit=5")
+    d = r.json()
+    check("F2.1 保养计划接口", r.status_code == 200 and d.get("count", 0) >= 1,
+          f"count={d.get('count')}")
+    plan = (d.get("plans") or [{}])[0]
+    check("F2.2 计划含周期与到期", "cycle_days" in plan and "days_left" in plan,
+          f"周期{plan.get('cycle_days')}天 剩{plan.get('days_left')}天")
+
+    r = c.get("/v1/inspections?limit=5")
+    d = r.json()
+    check("F2.3 点检任务接口", r.status_code == 200 and d.get("count", 0) >= 1,
+          f"count={d.get('count')}")
+    task = (d.get("tasks") or [{}])[0]
+    check("F2.4 任务含检查项与逾期标记", isinstance(task.get("items"), list)
+          and "overdue" in task,
+          f"{len(task.get('items') or [])} 项 overdue={task.get('overdue')}")
+
+    r = c.post("/v1/inspections/generate", json={"days": 3, "limit": 5},
+               headers={"X-Auth-Token": optok})
+    check("F2.5 值班员无 plan.edit 被拒", r.status_code == 403, f"HTTP {r.status_code}")
+
+    r1 = c.post("/v1/inspections/generate", json={"days": 3, "limit": 5},
+                headers={"X-Auth-Token": tok})
+    r2 = c.post("/v1/inspections/generate", json={"days": 3, "limit": 5},
+                headers={"X-Auth-Token": tok})
+    check("F2.6 主管可生成任务", r1.status_code == 200 and "created" in r1.json(),
+          f"created={r1.json().get('created')}")
+    check("F2.7 生成幂等", r2.json().get("created") == 0,
+          f"第二次 created={r2.json().get('created')}")
+
+    r = c.get("/v1/stats/inspection")
+    d = r.json()
+    need = {"pending", "done", "overdue", "ng_items", "plans", "completion_pct"}
+    check("F2.8 点检汇总字段齐全", r.status_code == 200 and need.issubset(d.keys()),
+          f"缺 {need - set(d.keys())}" if not need.issubset(d.keys()) else
+          f"待执行{d.get('pending')} 逾期{d.get('overdue')} 计划{d.get('plans')}")
+
+    r = c.post("/v1/inspections/INS-NOT-EXIST/submit", json={"items": []},
+               headers={"X-Auth-Token": optok})
+    check("F2.9 不存在任务 404", r.status_code == 404, f"HTTP {r.status_code}")
+
+    print("\n===== F3. 页面与交互 =====", flush=True)
+    browser = pw.chromium.launch(executable_path=CHROME, headless=True,
+                                 args=["--no-sandbox", "--disable-dev-shm-usage"])
+    page = browser.new_page(viewport={"width": 1600, "height": 1000})
+    bad: list[str] = []
+    js: list[str] = []
+    page.on("response", lambda r: bad.append(f"{r.status} {r.url}") if r.status >= 400 else None)
+    page.on("pageerror", lambda e: js.append(str(e)[:110]))
+
+    page.goto(f"{BASE}/console#/inspections", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(3200)
+    check("F3.1 点检页 KPI", page.locator("#ins-kpis .kpi").count() == 5,
+          f"{page.locator('#ins-kpis .kpi').count()} 个")
+    rows = page.locator("#ins-rows tr").count()
+    check("F3.2 点检页有任务", rows >= 1, f"{rows} 行")
+    shot(page, "F3_inspections")
+
+    # 无待执行任务时补生成，保证交互用例可复跑
+    if page.locator("#ins-rows button[data-ins]").count() == 0:
+        c.post("/v1/inspections/generate", json={"days": 7, "limit": 20},
+               headers={"X-Auth-Token": tok})
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_timeout(3200)
+
+    btn = page.locator("#ins-rows button[data-ins]").first
+    if btn.count():
+        btn.click()
+        page.wait_for_timeout(800)
+        n_items = page.locator("#ins-m-items .ins-item").count()
+        opened = page.evaluate("() => document.getElementById('ins-mask').classList.contains('on')")
+        check("F3.3 点检弹窗打开且带检查项", opened and n_items >= 1,
+              f"items={n_items} open={opened}")
+        shot(page, "F3_inspect_modal")
+
+        page.locator("#ins-m-items .ins-item").first.locator(".seg2 .ng").click()
+        page.locator("#ins-m-note").fill("自动化回归：标记异常")
+        page.click("#ins-m-submit")
+        page.wait_for_timeout(2500)
+        toast = page.evaluate("() => document.getElementById('toast')?.innerText?.trim()")
+        closed = not page.evaluate(
+            "() => document.getElementById('ins-mask').classList.contains('on')")
+        check("F3.4 提交点检成功", closed and bool(toast) and "完成" in (toast or ""),
+              str(toast)[:60])
+        done_rows = page.locator("#ins-rows tr:has-text('已完成')").count()
+        check("F3.5 提交后状态变已完成", done_rows >= 1, f"{done_rows} 行已完成")
+    else:
+        check("F3.3 存在可执行任务", False, "无 PENDING 任务且补生成失败")
+
+    page.goto(f"{BASE}/console#/plans", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(3000)
+    check("F3.6 保养计划 KPI", page.locator("#plan-kpis .kpi").count() == 5,
+          f"{page.locator('#plan-kpis .kpi').count()} 个")
+    prows = page.locator("#plan-rows tr").count()
+    check("F3.7 保养计划列表", prows >= 1, f"{prows} 行")
+    page.click("#seg-pdue button[data-d='overdue']")
+    page.wait_for_timeout(1100)
+    ov = page.locator("#plan-rows tr").count()
+    check("F3.8 逾期筛选生效", ov <= prows, f"逾期 {ov} / 全部 {prows}")
+    page.click("#seg-pdue button[data-d='']")
+    page.wait_for_timeout(900)
+    shot(page, "F3_plans")
+
+    # 登录 UI
+    page.click("#btn-user")
+    page.wait_for_timeout(500)
+    page.fill("#login-user", "admin")
+    page.fill("#login-pass", "Admin@2026")
+    page.click("#login-submit")
+    page.wait_for_timeout(2200)
+    label = page.locator("#user-label").inner_text()
+    check("F3.9 登录后显示身份", "主管" in label or "管理员" in label, label)
+    shot(page, "F3_login")
+
+    # 值班员权限收紧
+    page.click("#btn-user")          # 登出
+    page.wait_for_timeout(700)
+    logged_out = page.locator("#user-label").inner_text().strip() == "登录"
+    check("F3.10 登出清除身份", logged_out, page.locator("#user-label").inner_text())
+    page.click("#btn-user")
+    page.wait_for_timeout(400)
+    page.fill("#login-user", "op_li")
+    page.fill("#login-pass", "Oper@2026")
+    page.click("#login-submit")
+    page.wait_for_timeout(2000)
+    page.goto(f"{BASE}/console#/inspections", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(3000)
+    page.click("#btn-gen-ins")
+    page.wait_for_timeout(900)
+    denied = page.evaluate("() => document.getElementById('toast')?.innerText?.trim()")
+    check("F3.11 值班员无生成权限被拦", "权限" in (denied or ""), str(denied)[:60])
+    shot(page, "F3_operator_denied")
+
+    # 回归：点击委托白名单（曾漏 data-ack，导致按钮点了没反应且不报错）
+    page.goto(f"{BASE}/console#/alerts", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(3000)
+    ack = page.locator("#alert-rows button[data-ack]").first
+    if ack.count():
+        ack.click()
+        page.wait_for_timeout(2400)
+        t = page.evaluate("() => document.getElementById('toast')?.innerText?.trim()")
+        check("F3.12 告警确认按钮可点击（点击委托回归）",
+              "ACKED" in (t or "") or "告警" in (t or ""), str(t)[:60])
+    else:
+        check("F3.12 告警确认按钮存在", False, "无 data-ack 按钮")
+
+    page.goto(f"{BASE}/console#/diagnoses", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(2800)
+    b2 = page.locator("#diag-rows button[data-asset360]").first
+    if b2.count():
+        b2.click()
+        page.wait_for_timeout(3000)
+        h = page.evaluate("() => location.hash")
+        title = page.locator("#a360-title").inner_text()
+        check("F3.13 诊断历史可跳设备 360", "#/asset/" in h and bool(title.strip()),
+              f"{h} · {title}")
+    else:
+        check("F3.13 诊断历史有跳转按钮", False, "无 data-asset360")
+
+    # 主题切换：暗色令牌 + 持久化
+    page.goto(f"{BASE}/console#/dashboard", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(2600)
+    before = page.evaluate("() => document.body.classList.contains('dark')")
+    page.click("#btn-theme")
+    page.wait_for_timeout(1000)
+    after = page.evaluate("() => document.body.classList.contains('dark')")
+    bg = page.evaluate("() => getComputedStyle(document.body).backgroundColor")
+    check("F3.16 主题切换生效", after != before and "rgb(11, 18, 32)" == bg,
+          f"dark={after} bg={bg}")
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_timeout(2200)
+    kept = page.evaluate("() => document.body.classList.contains('dark')")
+    check("F3.17 主题选择被记住", kept == after, f"刷新后 dark={kept}")
+    page.click("#btn-theme")
+    page.wait_for_timeout(800)
+    check("F3.18 可切回浅色",
+          page.evaluate("() => !document.body.classList.contains('dark')"),
+          page.evaluate("() => getComputedStyle(document.body).backgroundColor"))
+
+    real_bad = [b for b in bad if "favicon" not in b.lower()]
+    check("F3.14 新页面无资源失败", not real_bad, "; ".join(real_bad[:2])[:110])
+    check("F3.15 新页面无 JS 异常", not js, "; ".join(js[:2])[:110])
+    browser.close()
+    c.close()
+
+
 def main() -> None:
     t0 = time.time()
     print(f"谛听 PdM 全端全链路功能测试 · {datetime.now():%Y-%m-%d %H:%M:%S}", flush=True)
@@ -578,6 +805,7 @@ def main() -> None:
         test_screen(pw)
         test_console(pw)
         test_extended(pw)
+        test_ops_and_auth(pw)
     test_api()
     test_java()
 
