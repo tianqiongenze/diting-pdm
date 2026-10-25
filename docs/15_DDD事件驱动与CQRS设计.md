@@ -429,3 +429,32 @@ Topic：
 **不要一上来就全量 DDD + 全量 CQRS。** 先打通"事件能可靠送达 + 幂等消费"，这是地基；地基不牢，上面都是沙。
 
 
+
+---
+
+## 11. 新增限界上下文与事件（2026-10-25 对齐）
+
+### 11.1 新增四个上下文
+
+| 上下文 | 职责 | 聚合根 | 表 |
+|---|---|---|---|
+| **Harness**（通用域） | 计划执行、权限门、Hooks、遥测 | 计划执行（trace） | 无独立表（span 在内存/OTLP） |
+| **Memory/Skill**（支撑域） | 三层记忆、技能沉淀审批、冻结回滚 | 技能（skill_id） | agent_session / skill_registry / memory_freeze |
+| **WorldModel**（核心域） | 退化拟合、反事实推演 | 推演请求（临时） | 复用 read_asset_health_history |
+| **Federation/A2A**（通用域） | 站点注册、摘要上行、跨域任务 | 任务（task_id） | site_registry / read_edge_summary / a2a_task / quality_report |
+
+### 11.2 新增领域事件（命名遵循 `com.yadea.pdm.<ctx>.<entity>.<verb>.v1`）
+
+| 事件 | 触发 | 消费者 |
+|---|---|---|
+| `com.yadea.pdm.skill.approved.v1` | 技能审批通过 | 记忆加载、审计 |
+| `com.yadea.pdm.skill.rolledback.v1` | 技能回滚 | 审计 |
+| `com.yadea.pdm.model.driftDetected.v1` | 漂移超阈值 | 告警、模型迭代流程 |
+| `com.yadea.pdm.a2a.taskCompleted.v1` | A2A 任务完成 | 请求方 Agent |
+| `com.yadea.pdm.federation.summaryUploaded.v1` | 边缘摘要上行 | 集团对标看板 |
+
+### 11.3 CQRS 一致性说明
+
+- 世界模型/漂移检测读的是**读模型**（`read_asset_health_history`），属最终一致；
+  因此推演结果必须带区间与样本量，不能当作强一致事实。
+- 技能审批与判据发布是**写模型**命令，必须走版本化通道（宪法第十一/十二条）。

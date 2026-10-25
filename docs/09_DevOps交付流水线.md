@@ -316,3 +316,46 @@ Git（deploy/）  ←── ArgoCD 持续比对 ──→  K8s 集群
 5. **禁止把生产数据贴进外部 AI 工具**。
 
 > 这 5 条不是保守，是 2026 年企业级 AI 编码的真实教训：**AI 让写代码变快，让"理解代码"变慢**。规格是唯一能对抗这种熵增的东西。
+
+
+---
+
+## 11. 交付流水线增补（2026-10-25）
+
+### 11.1 新增交付物
+
+| 类别 | 文件 | 作用 |
+|---|---|---|
+| 数据库迁移 | `tools/migrate.sh` | 按文件名顺序执行 `db/tidb/*.sql`，checksum 幂等，`--dry-run` |
+| Helm Chart | `deploy/helm/diting-pdm/` | 单 chart 双模式（center/edge），values-edge 覆盖 |
+| GitOps | `deploy/gitops/argocd-app-site-b.yaml` | 按基地灰度，`prune=false` 防误删 PVC |
+| 可观测 | `deploy/observability/prometheus-rules.yaml`、`otel-collector.yaml` | 8 条告警 + OTLP 链路 |
+| 压测 | `tools/load_test.js` | k6，含 NFR-204 阈值 |
+| CI 加固 | `.github/workflows/ci.yml` | pip-audit 依赖扫描 + helm lint + 模板渲染 |
+
+### 11.2 发布流程（当前实操）
+
+```
+1) 改代码 → 2) pytest 146 全绿
+3) 构建镜像（注意：不要复用 tag，containerd 会缓存）
+4) 迁移：bash tools/migrate.sh（幂等）
+5) 部署：kubectl set image / helm upgrade
+6) 验证：/healthz → /events/stats（transport=pulsar）→ /cache/stats（l2=true）
+7) 回归：E2E 70 + 浏览器 211
+```
+
+### 11.3 依赖纪律（三次踩坑的教训）
+
+- requirements 必须**纯净构建验证**（曾靠环境污染掩盖缺 pymysql / pulsar-client）
+- 老 CPU 集群：`numpy<2`、`multidict<7.2` 必须钉版本
+- 依赖变更必须跑一次 `--no-cache` 构建
+
+### 11.4 可观测门禁
+
+| 指标 | 阈值 | 告警 |
+|---|---|---|
+| 覆盖率 | ≥95% | PdmCoverageLow |
+| 消费积压 | <1000 | PdmConsumerBacklog |
+| 边缘心跳 | <30min | PdmEdgeOffline |
+| 判据版本一致 | 24h 内 | PdmRuleVersionDrift |
+| 模型精确率 | ≥0.6 | PdmPrecisionLow |
