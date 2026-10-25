@@ -62,6 +62,8 @@ _UPSERT_PK: dict[str, tuple[str, ...]] = {
     "alert_rule": ("tenant_id", "rule_id", "version"),
     "site_registry": ("site_id",),
     "read_edge_summary": ("site_id",),
+    "agent_session": ("tenant_id", "session_id"),
+    "model_version": ("tenant_id", "model_id"),
 }
 
 _DT_CONVERTERS = {"DATETIME", "DATE", "TIMESTAMP"}

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: diting-pdm
+description: 谛听 PdM 设备预测性维护平台（集团中心 + 边缘站点，单 chart 双模式）
+type: application
+version: 1.0.0
+appVersion: "0.9.20"
+keywords: [predictive-maintenance, pdm, industrial, ai-agent]
+maintainers:
+  - name: Diting PdM Team

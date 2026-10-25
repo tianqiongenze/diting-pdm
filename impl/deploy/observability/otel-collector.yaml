@@ -1,0 +1,80 @@
+# =============================================================================
+# OTel Collector 配置 · Diting PdM（docs/43 Phase G1）
+#
+# 链路：python-diagnosis（OTLP/HTTP，PDM_OTLP_ENDPOINT 指向本 Collector）
+#       → Collector（batch + 资源属性）→ 后端（Tempo/Jaeger/日志）
+#
+# 部署：kubectl -n monitoring create configmap pdm-otel-collector \
+#         --from-file=otel-collector.yaml=impl/deploy/observability/otel-collector.yaml
+#
+# 未部署 Collector 时的降级：应用侧 otel.py 自动退回进程内环形缓冲，
+# 经 GET /v1/harness/traces 查询——内网/CI 无需 Collector 也能验证埋点。
+# =============================================================================
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  # 批量聚合，降低后端压力
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+  # 资源属性：服务名 + 环境（GenAI 语义约定要求 service.name 存在）
+  resource:
+    attributes:
+      - key: service.name
+        value: python-diagnosis
+        action: upsert
+      - key: deployment.environment
+        value: prod
+        action: upsert
+
+  # 内存保护：防止 Collector 自身 OOM
+  memory_limiter:
+    check_interval: 2s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # 属性清理：避免高基数标签撑爆后端（tenant_id 保留，device_id 等丢弃）
+  attributes:
+    actions:
+      - key: gen_ai.request.model
+        action: upsert
+      - key: http.request.header.authorization
+        action: delete
+
+exporters:
+  # 主通道：OTLP 到后端（Tempo/Jaeger 均可）
+  otlphttp:
+    endpoint: ${OTEL_BACKEND_ENDPOINT:-http://tempo.monitoring.svc.cluster.local:4318}
+    tls:
+      insecure: true
+
+  # 调试通道（内网排障用；生产可关）
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 127.0.0.1:1777
+
+service:
+  extensions: [health_check, pprof]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, attributes, batch]
+      exporters: [otlphttp]
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888

@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-diagnosis
+  labels:
+    {{- include "pdm.labels" . | nindent 4 }}
+    app: python-diagnosis
+spec:
+  replicas: {{ .Values.replicaCount }}
+  {{- if eq .Values.mode "edge" }}
+  strategy:
+    type: Recreate          # SQLite 是 RWO 卷，滚动会双挂载失败
+  {{- else }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: python-diagnosis
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "pdm.labels" . | nindent 8 }}
+        app: python-diagnosis
+      {{- if .Values.observability.prometheusScrape }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+      {{- end }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            {{- include "pdm.env" . | nindent 12 }}
+            {{- if .Values.site.id }}
+            - name: PDM_EDGE_SITE_ID
+              value: {{ .Values.site.id | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            {{- if .Values.persistence.enabled }}
+            - {name: data, mountPath: /app/data}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-data
+        {{- end }}

@@ -511,13 +511,38 @@ async def append_worklog_endpoint(request: Request) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         payload = {}
     actor = (ident or {}).get("sub") or str(payload.get("actor") or "unknown")
+    action = str(payload.get("action") or "")
     try:
-        return await asyncio.to_thread(
+        out = await asyncio.to_thread(
             repository.append_work_log, tenant, str(payload.get("card_id") or ""),
-            str(payload.get("action") or ""), actor, str(payload.get("note") or ""),
+            action, actor, str(payload.get("note") or ""),
             payload.get("actual_cost"))
     except ValueError as exc:
         raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    # 预测反馈闭环（Phase F3）：工单关闭时若带上预测/实际结果，自动回写
+    # prediction_feedback（模型准确率的唯一事实源）。缺字段不阻断关闭。
+    if action == "CLOSED" and payload.get("predicted_level") and payload.get("actual_outcome"):
+        try:
+            from .model import record_feedback
+            await asyncio.to_thread(
+                record_feedback, tenant,
+                str(payload.get("asset_id") or ""),
+                str(payload.get("model_id") or domain.MODEL_VERSION),
+                str(payload.get("predicted_level")),
+                str(payload.get("actual_outcome")),
+                diag_id=str(payload.get("diag_id") or ""),
+                card_id=str(payload.get("card_id") or ""),
+                predicted_hi=payload.get("predicted_hi"),
+                actual_hi=payload.get("actual_hi"),
+                note=str(payload.get("feedback_note") or ""),
+                closed_by=actor)
+            out["feedback_recorded"] = True
+        except ValueError:
+            out["feedback_recorded"] = False   # 非法枚举值：不阻断
+        except Exception:  # noqa: BLE001 - 反馈表缺失等不阻断工单关闭
+            out["feedback_recorded"] = False
+    return out
 
 
 @get("/v1/worklogs")
@@ -715,6 +740,512 @@ async def site_summaries_endpoint(request: Request) -> dict[str, Any]:
     """各边缘站点最新摘要（集团对标大屏数据源）。"""
     rows = await asyncio.to_thread(repository.list_edge_summaries)
     return {"count": len(rows), "sites": rows}
+
+
+# ---------- Harness 运行时（Phase A） ----------
+@get("/v1/harness/tools")
+async def harness_tools_endpoint() -> dict[str, Any]:
+    """工具注册表（Harness 与 MCP 共用的契约，含副作用分级）。"""
+    from . import harness
+    return {"count": len(harness.list_tools()),
+            "tools": [t.public_spec() for t in harness.list_tools()]}
+
+
+@post("/v1/harness/run", status_code=200)
+async def harness_run_endpoint(request: Request) -> dict[str, Any]:
+    """执行一个 Harness 计划（带权限门 + Hooks + 熔断）。
+
+    请求：{"plan":[{"tool":"...","arguments":{...},"rationale":"..."}],
+           "approvals":{"<tool>": true}, "downtime_cost_per_hour": 6000}
+    响应：DONE / PENDING_APPROVAL（含待确认步骤）；失败抛 LoopError → 409。
+    """
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    from . import harness
+
+    plan = [harness.Step(tool=str(s.get("tool") or ""),
+                         arguments=dict(s.get("arguments") or {}),
+                         rationale=str(s.get("rationale") or ""))
+            for s in (payload.get("plan") or [])]
+    if not plan:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="plan required")
+    ctl = harness.LoopController(
+        tenant, plan,
+        approvals={str(k): bool(v) for k, v in (payload.get("approvals") or {}).items()},
+        downtime_cost_per_hour=float(payload.get("downtime_cost_per_hour") or 6000.0))
+    span = harness.otel.invoke_agent(tenant, "harness_run")
+    try:
+        out = await asyncio.to_thread(ctl.run)
+        harness.otel.end_span(span, status=out.get("status", "?"), turns=out.get("trace", {}).get("turns", 0))
+        return out
+    except harness.LoopError as exc:
+        harness.otel.end_span(span, status="ESCALATE", error=str(exc)[:120])
+        raise HTTPException(status_code=HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@get("/v1/harness/traces")
+async def harness_traces_endpoint(limit: int = 50) -> dict[str, Any]:
+    """OTel span 环形缓冲查询（未配 OTLP 端点时的本地视图）。"""
+    from . import harness
+    return harness.otel.stats() | {"spans": harness.otel.recent(max(1, min(int(limit), 500)))}
+
+
+@get("/v1/harness/eval")
+async def harness_eval_endpoint() -> dict[str, Any]:
+    """Eval Loop：golden cases 回放结果。"""
+    from . import harness
+    return await asyncio.to_thread(harness.eval.run_cases)
+
+
+# ---------- Hermes 记忆与受控技能（Phase B） ----------
+@post("/v1/memory/session", status_code=200)
+async def memory_session_endpoint(request: Request) -> dict[str, Any]:
+    """会话滚动摘要（L2 记忆）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    from . import memory
+    return await asyncio.to_thread(
+        memory.layers.roll_summary, tenant,
+        str(payload.get("session_id") or "default"), str(payload.get("turn") or ""))
+
+
+@get("/v1/memory/recall")
+async def memory_recall_endpoint(request: Request, q: str = "", limit: int = 10) -> dict[str, Any]:
+    """事件记忆检索（L3，只读）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    from . import memory
+    rows = await asyncio.to_thread(memory.layers.recall, tenant, q, limit)
+    return {"tenant_id": tenant, "count": len(rows), "items": rows}
+
+
+@get("/v1/memory/profile/{asset_id:str}")
+async def memory_profile_endpoint(request: Request, asset_id: str) -> dict[str, Any]:
+    """设备档案（L1，上下文注入用）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    from . import memory
+    return await asyncio.to_thread(memory.layers.asset_profile, tenant, asset_id)
+
+
+@get("/v1/skills")
+async def list_skills_endpoint(request: Request, status: str = "") -> dict[str, Any]:
+    """技能列表（PENDING 需审批；APPROVED 才会被加载）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    from . import memory
+    rows = await asyncio.to_thread(memory.skills.list_skills, tenant, status)
+    return {"tenant_id": tenant, "count": len(rows), "items": rows}
+
+
+@post("/v1/skills", status_code=201)
+async def propose_skill_endpoint(request: Request) -> dict[str, Any]:
+    """提议候选技能（不生效——工业红线）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    from . import memory
+    try:
+        return await asyncio.to_thread(
+            memory.skills.propose, tenant,
+            str(payload.get("name") or ""), str(payload.get("body") or ""),
+            str(payload.get("source_case_id") or ""),
+            str(payload.get("proposed_by") or "agent"))
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@post("/v1/skills/{skill_id:str}/approve", status_code=200)
+async def approve_skill_endpoint(request: Request, skill_id: str) -> dict[str, Any]:
+    """审批技能（生效唯一入口）。需 plan.approve 权限。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        ident = auth_mod.require(request.headers.get("X-Auth-Token"), "plan.approve")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    operator = (ident or {}).get("sub") or "manager"
+    from . import memory
+    try:
+        return await asyncio.to_thread(memory.skills.approve, tenant, skill_id, operator)
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@post("/v1/skills/{skill_id:str}/reject", status_code=200)
+async def reject_skill_endpoint(request: Request, skill_id: str) -> dict[str, Any]:
+    """驳回候选技能。需 plan.approve 权限。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        ident = auth_mod.require(request.headers.get("X-Auth-Token"), "plan.approve")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    operator = (ident or {}).get("sub") or "manager"
+    from . import memory
+    try:
+        return await asyncio.to_thread(memory.skills.reject, tenant, skill_id, operator)
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@post("/v1/skills/{skill_id:str}/rollback", status_code=200)
+async def rollback_skill_endpoint(request: Request, skill_id: str) -> dict[str, Any]:
+    """回滚已生效技能 → SUPERSEDED。需 plan.approve 权限。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        ident = auth_mod.require(request.headers.get("X-Auth-Token"), "plan.approve")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    operator = (ident or {}).get("sub") or "manager"
+    from . import memory
+    try:
+        return await asyncio.to_thread(memory.skills.rollback, tenant, skill_id, operator)
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@post("/v1/memory/freeze", status_code=201)
+async def memory_freeze_endpoint(request: Request) -> dict[str, Any]:
+    """创建记忆/技能冻结快照。需 plan.approve 权限。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        auth_mod.require(request.headers.get("X-Auth-Token"), "plan.approve")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    from . import memory
+    return await asyncio.to_thread(memory.freeze.create_snapshot, tenant,
+                                   str(payload.get("note") or ""))
+
+
+@get("/v1/memory/freeze")
+async def memory_freeze_list_endpoint(request: Request) -> dict[str, Any]:
+    """冻结快照列表。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    from . import memory
+    rows = await asyncio.to_thread(memory.freeze.list_snapshots, tenant)
+    return {"tenant_id": tenant, "count": len(rows), "items": rows}
+
+
+@post("/v1/memory/freeze/{freeze_id:str}/restore", status_code=200)
+async def memory_freeze_restore_endpoint(request: Request, freeze_id: str) -> dict[str, Any]:
+    """恢复到指定快照。需 plan.approve 权限。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        ident = auth_mod.require(request.headers.get("X-Auth-Token"), "plan.approve")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    operator = (ident or {}).get("sub") or "manager"
+    from . import memory
+    try:
+        return await asyncio.to_thread(memory.freeze.restore, tenant, freeze_id, operator)
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+# ---------- 世界模型 L1：反事实推演（Phase C） ----------
+@post("/v1/world/counterfactual", status_code=200)
+async def world_counterfactual_endpoint(request: Request) -> dict[str, Any]:
+    """反事实推演：推迟/提前保养的 HI 轨迹 + 区间 + 预计跌破天数。
+
+    工业红线：输出必带不确定性区间；样本不足返回 null（不编数字）。
+    """
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    asset_id = str(payload.get("asset_id") or "")
+    if not asset_id:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="asset_id required")
+    maintain_at = payload.get("maintain_at_day")
+    from . import world
+    return await asyncio.to_thread(
+        world.counterfactual, tenant, asset_id,
+        horizon_days=max(1, min(int(payload.get("horizon_days") or 14), 90)),
+        maintain_at_day=(int(maintain_at) if maintain_at is not None else None),
+        maintain_reset_hi=(float(payload["maintain_reset_hi"])
+                           if payload.get("maintain_reset_hi") is not None else None),
+        critical_hi=float(payload.get("critical_hi") or 40.0),
+        history_days=max(7, min(int(payload.get("history_days") or 90), 365)))
+
+
+@get("/v1/world/model/{asset_id:str}")
+async def world_model_endpoint(request: Request, asset_id: str) -> dict[str, Any]:
+    """设备退化模型摘要（斜率/残差/窗口），无趋势返回 model=null。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    import datetime
+
+    from . import world
+    since = datetime.datetime.now() - datetime.timedelta(days=90)
+
+    def _fit() -> dict[str, Any]:
+        from app import repository
+        rows = (
+            repository.TenantQueryBuilder(tenant)
+            .query("SELECT ts, hi FROM read_asset_health_history "
+                   "WHERE tenant_id=%s AND asset_id=%s AND ts >= %s ORDER BY ts",
+                   asset_id, since)
+            .fetchall()
+        )
+        m = world.fit(rows)
+        if m is None:
+            return {"asset_id": asset_id, "model": None}
+        return {"asset_id": asset_id, "model": {
+            "slope_per_day": round(m.slope_per_day, 4),
+            "resid_std": round(m.resid_std, 3),
+            "n_points": m.n_points, "window_days": round(m.window_days, 1)}}
+
+    return await asyncio.to_thread(_fit)
+
+
+# ---------- A2A 智能体互联（Phase E） ----------
+@get("/.well-known/agent.json")
+async def agent_card_endpoint(request: Request) -> dict[str, Any]:
+    """A2A Agent Card：能力发现（docs/43 E1）。"""
+    from . import a2a
+    tenant = request.headers.get("X-Tenant-Id") or ""
+    return a2a.agent_card(base_url=str(request.base_url), tenant=tenant)
+
+
+@post("/a2a/tasks/send", status_code=201)
+async def a2a_task_send_endpoint(request: Request) -> dict[str, Any]:
+    """A2A tasks/send：创建任务（白名单类型）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    from . import a2a
+    try:
+        return await asyncio.to_thread(
+            a2a.create_task, tenant,
+            str(payload.get("task_type") or ""),
+            dict(payload.get("payload") or {}),
+            str(payload.get("requester") or "anonymous"))
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@get("/a2a/tasks/{task_id:str}")
+async def a2a_task_get_endpoint(request: Request, task_id: str,
+                                execute: bool = False) -> dict[str, Any]:
+    """A2A tasks/get：查询任务；execute=true 时同步执行（无工作进程场景）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    from . import a2a
+    if execute:
+        try:
+            return await asyncio.to_thread(a2a.execute_task, tenant, task_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    row = await asyncio.to_thread(a2a.get_task, tenant, task_id)
+    if row is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="task not found")
+    return row
+
+
+# ---------- 模型治理（Phase F） ----------
+@get("/v1/models")
+async def list_models_endpoint(request: Request, status: str = "") -> dict[str, Any]:
+    """模型版本注册表。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    from .model import list_models
+    rows = await asyncio.to_thread(list_models, tenant, status)
+    return {"tenant_id": tenant, "current": domain.MODEL_VERSION,
+            "count": len(rows), "items": rows}
+
+
+@post("/v1/models", status_code=201)
+async def register_model_endpoint(request: Request) -> dict[str, Any]:
+    """注册模型版本。需 plan.approve 权限。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        ident = auth_mod.require(request.headers.get("X-Auth-Token"), "plan.approve")
+    except auth_mod.AuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    from .model import register_model
+    return await asyncio.to_thread(
+        register_model, tenant,
+        str(payload.get("model_id") or ""),
+        str(payload.get("model_kind") or "rules"),
+        str(payload.get("description") or ""),
+        str(payload.get("feature_set") or ""),
+        payload.get("metrics") or {},
+        (ident or {}).get("sub") or "manager")
+
+
+@get("/v1/models/drift")
+async def model_drift_endpoint(request: Request, window_days: int = 7) -> dict[str, Any]:
+    """HI 分布漂移检测（双窗口 z 检验）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    from .model import detect_drift
+    return await asyncio.to_thread(detect_drift, tenant,
+                                   window_days=max(1, min(int(window_days), 30)))
+
+
+@get("/v1/models/accuracy")
+async def model_accuracy_endpoint(request: Request, model_id: str = "") -> dict[str, Any]:
+    """模型准确率（预测命中/误报/漏报，来自 prediction_feedback）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    from .model import accuracy_report
+    return await asyncio.to_thread(accuracy_report, tenant, model_id)
+
+
+@post("/v1/models/feedback", status_code=201)
+async def model_feedback_endpoint(request: Request) -> dict[str, Any]:
+    """回写预测反馈（"预测 vs 实际"）。"""
+    tenant = request.headers.get("X-Tenant-Id")
+    if not tenant:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    from .model import record_feedback
+    try:
+        return await asyncio.to_thread(
+            record_feedback, tenant,
+            str(payload.get("asset_id") or ""),
+            str(payload.get("model_id") or domain.MODEL_VERSION),
+            str(payload.get("predicted_level") or ""),
+            str(payload.get("actual_outcome") or ""),
+            diag_id=str(payload.get("diag_id") or ""),
+            card_id=str(payload.get("card_id") or ""),
+            predicted_hi=payload.get("predicted_hi"),
+            actual_hi=payload.get("actual_hi"),
+            note=str(payload.get("note") or ""),
+            closed_by=str(payload.get("closed_by") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+# ---------- Prometheus 指标（Phase G2 数据源） ----------
+@get("/metrics")
+async def metrics_endpoint() -> Response:
+    """Prometheus 文本格式指标（与 prometheus-rules.yaml 的指标名一一对应）。
+
+    设计：指标查询失败时输出 NaN/跳过（不阻塞抓取），保证 /metrics 永不 5xx。
+    """
+    lines: list[str] = []
+
+    def _add(name: str, value: Any, labels: str = "", help_text: str = "") -> None:
+        if help_text:
+            lines.append(f"# HELP {name} {help_text}")
+            lines.append(f"# TYPE {name} gauge")
+        lines.append(f"{name}{labels} {value}")
+
+    # 服务存活
+    _add("pdm_up", 1, help_text="服务存活（1=存活）")
+
+    # 覆盖率 + 四级分布（site-a 为默认展示租户）
+    try:
+        ov = await asyncio.to_thread(repository.overview_stats, "site-a")
+        _add("pdm_coverage_pct", ov.get("coverage_pct", 0), '{tenant="site-a"}',
+             "诊断覆盖率百分比")
+        _add("pdm_assets_total", ov.get("total_assets", 0), '{tenant="site-a"}',
+             "在监设备总数")
+    except Exception:  # noqa: BLE001
+        lines.append('pdm_coverage_pct{tenant="site-a"} NaN')
+
+    # 消费统计
+    try:
+        es = events.stats_snapshot()
+        _add("pdm_consumer_emitted_total", es.get("emitted", 0), help_text="事件发射总数")
+        _add("pdm_consumer_failures_total", es.get("failures", 0),
+             help_text="事件发射失败数")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 边缘心跳（每站点一个序列）
+    try:
+        sites = await asyncio.to_thread(repository.list_sites, 30)
+        for s in sites:
+            hb = s.get("last_seen_min_ago")
+            ts = 0 if hb is None else max(0, int(time.time() - float(hb) * 60))
+            _add("pdm_edge_heartbeat_timestamp_seconds", ts,
+                 f'{{site_id="{s["site_id"]}"}}', "边缘最近心跳 Unix 时间戳")
+            _add("pdm_edge_online", 1 if s.get("online") else 0,
+                 f'{{site_id="{s["site_id"]}"}}', "边缘在线（1=在线）")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 判据版本（site vs group，供版本漂移告警）
+    try:
+        for scope in ("site", "group"):
+            for r in await asyncio.to_thread(repository.list_alert_rules, "site-a", scope, None):
+                _add("pdm_rule_version", r.get("version", 1),
+                     f'{{tenant_id="site-a",rule_id="{r["rule_id"]}",scope="{scope}"}}',
+                     "判据版本号")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 模型漂移与准确率
+    try:
+        from .model import accuracy_report, detect_drift
+        drift = await asyncio.to_thread(detect_drift, "site-a", window_days=7)
+        if drift.get("z") is not None:
+            _add("pdm_model_drift_z", abs(float(drift["z"])), help_text="HI 分布漂移 z 值")
+        acc = await asyncio.to_thread(accuracy_report, "site-a", "")
+        if acc.get("precision") is not None:
+            _add("pdm_model_precision", acc["precision"], help_text="模型精确率")
+        if acc.get("recall") is not None:
+            _add("pdm_model_recall", acc["recall"], help_text="模型召回率")
+    except Exception:  # noqa: BLE001
+        pass
+
+    return Response(content="\n".join(lines) + "\n",
+                    media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 @put("/v1/rules/{rule_id:str}")
@@ -1031,8 +1562,12 @@ async def diagnose_endpoint(request: Request) -> dict[str, Any]:
 
 
 async def _on_startup() -> None:
-    cache.l2 = await build_l2(os.getenv("PDM_REDIS_URL"))
-    events.init(os.getenv("PDM_REDIS_URL"))
+    redis_url = os.getenv("PDM_REDIS_URL")
+    # 记录 URL 供懒加载自愈使用：启动瞬间 Redis 未就绪时不判死，
+    # 首次请求会按冷却窗口自动重试建连（cache._ensure_l2）
+    cache.l2_url = redis_url
+    cache.l2 = await build_l2(redis_url)
+    events.init(redis_url)
 
 app = Litestar(
     route_handlers=[healthz, version, cache_stats, events_stats, integration_stats, asset_trend, warmup_endpoint, diagnose_endpoint, diagnose_batch_endpoint, consult_endpoint, confirm_card, list_cards, mcp_endpoint, dashboard, screen_page, console_page,
@@ -1049,7 +1584,21 @@ app = Litestar(
                    list_rules_endpoint, upsert_rule_endpoint,
                    publish_group_rule_endpoint, fleet_stats_endpoint,
                    site_register_endpoint, list_sites_endpoint,
-                   site_summary_endpoint, site_summaries_endpoint],
+                   site_summary_endpoint, site_summaries_endpoint,
+                   harness_tools_endpoint, harness_run_endpoint,
+                   harness_traces_endpoint, harness_eval_endpoint,
+                   memory_session_endpoint, memory_recall_endpoint,
+                   memory_profile_endpoint, list_skills_endpoint,
+                   propose_skill_endpoint, approve_skill_endpoint,
+                   reject_skill_endpoint, rollback_skill_endpoint,
+                   memory_freeze_endpoint, memory_freeze_list_endpoint,
+                   memory_freeze_restore_endpoint,
+                   world_counterfactual_endpoint, world_model_endpoint,
+                   agent_card_endpoint, a2a_task_send_endpoint,
+                   a2a_task_get_endpoint,
+                   list_models_endpoint, register_model_endpoint,
+                   model_drift_endpoint, model_accuracy_endpoint,
+                   model_feedback_endpoint, metrics_endpoint],
     on_startup=[_on_startup],
     debug=os.getenv("PDM_ENV", "prod") != "prod",
 )

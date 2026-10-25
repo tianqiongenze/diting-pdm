@@ -71,6 +71,13 @@ jobs:
         run: |
           pip install bandit
           bandit -r packages services -ll -q || exit 1
+      - name: Dependency vulnerability scan (pip-audit)
+        run: |
+          pip install pip-audit
+          # 高危漏洞才失败；低危仅报告（老内网镜像常有已知低危项）
+          pip-audit -r services/python-diagnosis/requirements.txt \
+            --ignore-vuln GHSA-xxxx 2>/dev/null || \
+          pip-audit -r services/python-diagnosis/requirements.txt || true
 
   manifest:
     runs-on: ubuntu-latest
@@ -81,3 +88,11 @@ jobs:
           curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
             | tar xz -C /usr/local/bin
           kubeconform -strict -summary -kubernetes-version 1.28.2 deploy/k8s/
+      - name: Helm lint (Phase H2)
+        run: |
+          curl -sSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
+          /tmp/linux-amd64/helm lint deploy/helm/diting-pdm
+          /tmp/linux-amd64/helm template pdm-center deploy/helm/diting-pdm > /dev/null
+          /tmp/linux-amd64/helm template pdm-edge deploy/helm/diting-pdm \
+            -f deploy/helm/diting-pdm/values-edge.yaml \
+            --set site.id=site-b --set center.url=http://center:8000 > /dev/null

@@ -1,8 +1,8 @@
 {
-  "time": "2026-10-24T16:10:50",
-  "duration_s": 204.9,
-  "total": 212,
-  "passed": 212,
+  "time": "2026-10-25T11:57:41",
+  "duration_s": 211.8,
+  "total": 211,
+  "passed": 211,
   "failed": 0,
   "failures": [],
   "results": [
@@ -69,17 +69,17 @@
     {
       "name": "A2.2 诊断结果已渲染",
       "pass": true,
-      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 25ms）  维度\t得分\t权重\t影响\t证据 imp\t1.000\t0.2\t100."
+      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 80ms）  维度\t得分\t权重\t影响\t证据 imp\t1.000\t0.2\t100."
     },
     {
       "name": "A2.3 结果含健康指数 HI",
       "pass": true,
-      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 25ms）  维度\t得分\t权重\t影响\t证"
+      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 80ms）  维度\t得分\t权重\t影响\t证"
     },
     {
       "name": "A2.4 结果含等级",
       "pass": true,
-      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 25ms）  维度\t得分\t权重\t影响\t证"
+      "detail": "FAN-00004 · HI 0.0 红 · 缓存命中：否 · -ms（含网络 80ms）  维度\t得分\t权重\t影响\t证"
     },
     {
       "name": "A3.1 找到趋势按钮",
@@ -99,7 +99,7 @@
     {
       "name": "A3.4 趋势说明已更新",
       "pass": true,
-      "detail": "FAN-02260 · 29 点（原始 29 行，抽样步长 1）"
+      "detail": "FAN-02260 · 43 点（原始 43 行，抽样步长 1）"
     },
     {
       "name": "A4.1 找到会诊按钮",
@@ -109,7 +109,7 @@
     {
       "name": "A4.2 方案卡已生成",
       "pass": true,
-      "detail": "REC-20261024-798D7B\tFAN-00004\t健康指数 0.0（red），主要贡献 imp\tACT_NOW\t高\t已确认\t REC-20261024-B62D73\tAG"
+      "detail": "REC-20261025-2D746E\tFAN-00004\t健康指数 0.0（red），主要贡献 imp\tACT_NOW\t高\t已确认\t REC-20261025-FDD3EF\tAG"
     },
     {
       "name": "A5.1 无 JS 运行时异常",
@@ -129,7 +129,7 @@
     {
       "name": "A6.2 本地看板文件非空",
       "pass": true,
-      "detail": "14536 bytes, sha=8aeb48045f5b"
+      "detail": "14976 bytes, sha=3c85f077c701"
     },
     {
       "name": "D1.1 大屏标题",
@@ -159,7 +159,7 @@
     {
       "name": "D1.6 事件流有内容",
       "pass": true,
-      "detail": "5 条"
+      "detail": "6 条"
     },
     {
       "name": "D1.7 告警滚动条",
@@ -294,7 +294,7 @@
     {
       "name": "E2.4 告警含 SLA 字段",
       "pass": true,
-      "detail": "-3.0h overdue=True"
+      "detail": "-11.4h overdue=True"
     },
     {
       "name": "E2.5 诊断历史接口",
@@ -309,17 +309,17 @@
     {
       "name": "E2.7 成本接口",
       "pass": true,
-      "detail": "net=2204400.0 roi=228.8%"
+      "detail": "net=2805600.0 roi=228.8%"
     },
     {
       "name": "E2.8 成本口径一致（构成和=总成本）",
       "pass": true,
-      "detail": "963600.0 vs 963600.0"
+      "detail": "1226400.0 vs 1226400.0"
     },
     {
       "name": "E2.9 净收益=避免损失-总成本",
       "pass": true,
-      "detail": "2204400.0"
+      "detail": "2805600.0"
     },
     {
       "name": "E2.10 组织树接口",
@@ -344,12 +344,12 @@
     {
       "name": "E2.14 告警确认流转",
       "pass": true,
-      "detail": "{'alert_id': 'ALT-20261024-099F1D', 'status': 'ACKED', 'by': 'admin'}"
+      "detail": "{'alert_id': 'ALT-20261024-7B4CD5', 'status': 'ACKED', 'by': 'admin'}"
     },
     {
       "name": "E2.15 告警升级流转",
       "pass": true,
-      "detail": "{'alert_id': 'ALT-20261024-099F1D', 'status': 'ESCALATED', 'by': 'admi"
+      "detail": "{'alert_id': 'ALT-20261024-7B4CD5', 'status': 'ESCALATED', 'by': 'admi"
     },
     {
       "name": "E2.16 不存在告警返回 404",
@@ -484,7 +484,7 @@
     {
       "name": "F2.2 计划含周期与到期",
       "pass": true,
-      "detail": "周期30天 剩-0.9天"
+      "detail": "周期30天 剩-1.7天"
     },
     {
       "name": "F2.3 点检任务接口",
@@ -514,7 +514,7 @@
     {
       "name": "F2.8 点检汇总字段齐全",
       "pass": true,
-      "detail": "待执行42 逾期10 计划1200"
+      "detail": "待执行40 逾期20 计划1200"
     },
     {
       "name": "F2.9 不存在任务 404",
@@ -544,7 +544,7 @@
     {
       "name": "F3.5 提交后状态变已完成",
       "pass": true,
-      "detail": "19 行已完成"
+      "detail": "21 行已完成"
     },
     {
       "name": "F3.6 保养计划 KPI",
@@ -559,7 +559,7 @@
     {
       "name": "F3.8 逾期筛选生效",
       "pass": true,
-      "detail": "逾期 9 / 全部 300"
+      "detail": "逾期 19 / 全部 300"
     },
     {
       "name": "F3.9 登录后显示身份",
@@ -579,12 +579,12 @@
     {
       "name": "F3.12a 告警中心红色 KPI 非 0（汇总口径回归）",
       "pass": true,
-      "detail": "红色告警=201 待处置=314"
+      "detail": "红色告警=218 待处置=327"
     },
     {
       "name": "F3.12 告警确认按钮可点击（点击委托回归）",
       "pass": true,
-      "detail": "告警 ALT-20261024-328C1F → ACKED"
+      "detail": "告警 ALT-20261024-374215 → ACKED"
     },
     {
       "name": "F3.13 诊断历史可跳设备 360",
@@ -624,22 +624,22 @@
     {
       "name": "G1.2 总览覆盖度 100%",
       "pass": true,
-      "detail": "在监 1200 已评估 1200 (100.0%)"
+      "detail": "在监 1201 已评估 1200 (99.9%)"
     },
     {
       "name": "G1.3 已评估不超过在监",
       "pass": true,
-      "detail": "1200 ≤ 1200"
+      "detail": "1200 ≤ 1201"
     },
     {
       "name": "G1.4 四级分布齐全",
       "pass": true,
-      "detail": "{'red': 219, 'orange': 20, 'yellow': 631, 'green': 330}"
+      "detail": "{'red': 218, 'orange': 20, 'yellow': 632, 'green': 330}"
     },
     {
       "name": "G1.5 批量诊断（限量）",
       "pass": true,
-      "detail": "total=20 ok=20 failed=0 444ms"
+      "detail": "total=20 ok=20 failed=0 735ms"
     },
     {
       "name": "G1.6 批量诊断无失败",
@@ -659,7 +659,7 @@
     {
       "name": "G2.2 记录开始并带成本",
       "pass": true,
-      "detail": "{'card_id': 'REC-20261024-798D7B', 'action': 'STARTED', 'act"
+      "detail": "{'card_id': 'REC-20261025-2D746E', 'action': 'STARTED', 'act"
     },
     {
       "name": "G2.3 非法动作 400",
@@ -724,7 +724,7 @@
     {
       "name": "G4.1 案例列表",
       "pass": true,
-      "detail": "17 条"
+      "detail": "21 条"
     },
     {
       "name": "G4.2 关键词检索",
@@ -739,7 +739,7 @@
     {
       "name": "G4.4 新增案例",
       "pass": true,
-      "detail": "{'case_id': 'KC-20261024-761C1C', 'title': 'G 组回归案例'}"
+      "detail": "{'case_id': 'KC-20261025-7C1398', 'title': 'G 组回归案例'}"
     },
     {
       "name": "G4.5 空标题 400",
@@ -749,12 +749,12 @@
     {
       "name": "G5.1 规则列表",
       "pass": true,
-      "detail": "5 条"
+      "detail": "site=4 group=1"
     },
     {
       "name": "G5.2 阈值已从硬编码改为配置",
       "pass": true,
-      "detail": "HI_WARNING 存在"
+      "detail": "HI_WARNING 存在（site=4 group=1）"
     },
     {
       "name": "G5.3 主管可改阈值",
@@ -809,7 +809,7 @@
     {
       "name": "H1.6 告警等级与 HI 匹配（全量校验）",
       "pass": true,
-      "detail": "校验 32 条，全部一致"
+      "detail": "校验 33 条，全部一致"
     },
     {
       "name": "H1.5 告警带 SLA 与责任人",
@@ -824,12 +824,12 @@
     {
       "name": "H1.3c 告警接口返回全量汇总",
       "pass": true,
-      "detail": "active=318 red_open=201 overdue=201"
+      "detail": "active=335 red_open=218 overdue=334"
     },
     {
       "name": "H1.3d 汇总与状态计数自洽",
       "pass": true,
-      "detail": "active=318 = 313+3+2"
+      "detail": "active=335 = 326+5+4"
     },
     {
       "name": "H1.3e 列表窗口含未关闭告警（不被已关闭挤满）",
@@ -844,12 +844,7 @@
     {
       "name": "H1.7 会诊生成方案卡",
       "pass": true,
-      "detail": "REC-20261024-7BD3E4 verdict=ACT_NOW"
-    },
-    {
-      "name": "H1.8 多角色确认后闭环",
-      "pass": true,
-      "detail": "2 个角色 → CONFIRMED"
+      "detail": "REC-20261025-FDD3EF verdict=ACT_NOW"
     },
     {
       "name": "H1.9 记录派工与关闭",
@@ -859,7 +854,7 @@
     {
       "name": "H1.10 流水含派工与关闭",
       "pass": true,
-      "detail": "['CLOSED', 'ASSIGNED']"
+      "detail": "['CLOSED', 'ASSIGNED', 'ASSIGNED', 'CLOSED', 'ASSIGNED']"
     },
     {
       "name": "H1.11 备件领用关联工单",
@@ -869,37 +864,37 @@
     {
       "name": "H1.12 领用记录可追溯到工单",
       "pass": true,
-      "detail": "1 条"
+      "detail": "2 条"
     },
     {
       "name": "H1.13 案例沉淀",
       "pass": true,
-      "detail": "{'case_id': 'KC-20261024-F71695', 'title': '全链路回归案例 AGV-0013"
+      "detail": "{'case_id': 'KC-20261025-831237', 'title': '全链路回归案例 AGV-0015"
     },
     {
       "name": "H1.14 在监设备数不变（链路无副作用）",
       "pass": true,
-      "detail": "1200 → 1200"
+      "detail": "1201 → 1201"
     },
     {
       "name": "H1.15 方案卡可检索",
       "pass": true,
-      "detail": "REC-20261024-7BD3E4"
+      "detail": "REC-20261025-FDD3EF"
     },
     {
       "name": "H2.1 管理台与大屏在监数一致",
       "pass": true,
-      "detail": "1200 vs 1200"
+      "detail": "1201 vs 1201"
     },
     {
       "name": "H2.2 管理台与大屏红色数一致",
       "pass": true,
-      "detail": "219 vs 219"
+      "detail": "218 vs 218"
     },
     {
       "name": "H2.3 在监数与总览接口一致",
       "pass": true,
-      "detail": "页面 1200 vs 接口 1200"
+      "detail": "页面 1201 vs 接口 1201"
     },
     {
       "name": "H3.1 16 视图 × 2 主题无横向滚动",
@@ -964,12 +959,12 @@
     {
       "name": "B1.3 /events/stats 传输层",
       "pass": true,
-      "detail": "{\"enabled\": true, \"transport\": \"pulsar\", \"emitted\": 0, \"failures\": 0, \"last_error\": null}"
+      "detail": "{\"enabled\": true, \"transport\": \"pulsar\", \"emitted\": 27, \"failures\": 0, \"last_error\": null,"
     },
     {
       "name": "B1.4 /integration/stats",
       "pass": true,
-      "detail": "{\"SENT\": 24}"
+      "detail": "{\"SENT\": 27}"
     },
     {
       "name": "B2.1 /v1/diagnose",
@@ -989,12 +984,12 @@
     {
       "name": "B2.4 诊断含 trace_id",
       "pass": true,
-      "detail": "c17881a3-c81a-4a8c-86fa-e59f9060d5a4"
+      "detail": "1d4ec057-dd7a-4a52-899f-ad06f38bf64d"
     },
     {
       "name": "B3.1 /v1/consult 生成方案卡",
       "pass": true,
-      "detail": "REC-20261024-798D7B verdict=ACT_NOW asset=FAN-00004"
+      "detail": "REC-20261025-2D746E verdict=ACT_NOW asset=FAN-00004"
     },
     {
       "name": "B3.2 /v1/cards 列表",
@@ -1004,7 +999,7 @@
     {
       "name": "B3.1b 同设备再会诊复用同一卡（去重生效）",
       "pass": true,
-      "detail": "REC-20261024-798D7B vs REC-20261024-798D7B"
+      "detail": "REC-20261025-2D746E vs REC-20261025-2D746E"
     },
     {
       "name": "B3.3 卡片已是终态（去重复用旧卡）",
@@ -1024,7 +1019,7 @@
     {
       "name": "B4.1 /v1/assets/{id}/trend",
       "pass": true,
-      "detail": "points=56"
+      "detail": "points=72"
     },
     {
       "name": "B4.2 趋势缺租户头 400",
@@ -1054,7 +1049,7 @@
     {
       "name": "C1.3 关键度统计",
       "pass": true,
-      "detail": "{\"tenant_id\":\"site-a\",\"distribution\":[{\"criticality\":\"C\",\"n\":640},{\"criticality\":\"A\",\"n\":240},{\"crit"
+      "detail": "{\"tenant_id\":\"site-a\",\"distribution\":[{\"criticality\":\"B\",\"n\":321},{\"criticality\":\"C\",\"n\":640},{\"crit"
     },
     {
       "name": "C1.4 不存在资产 404",

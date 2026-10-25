@@ -1,0 +1,92 @@
+# 默认值 = 集团中心模式（TiDB）。边缘站点用 values-edge.yaml 覆盖。
+mode: center            # center | edge
+
+image:
+  repository: 10.167.2.175:30500/pdm/python-diagnosis
+  tag: "0.9.20"
+  pullPolicy: IfNotPresent
+  # CronJob 用 curl 镜像（诊断镜像无 curl）
+  curlRepository: 10.167.2.175:30500/library/curl
+  curlTag: "8.23.0"
+
+replicaCount: 2
+
+# 数据库后端（docs/44：集团 TiDB，边缘 SQLite）
+database:
+  backend: mysql        # mysql | sqlite
+  sqlitePath: /app/data/pdm_edge.db
+  tidb:
+    host: tidb.infra.svc.cluster.local
+    port: 4000
+    user: pdm_diag
+    secretName: pdm-tidb
+    secretKey: password
+
+# 站点身份（边缘必填；集团留空）
+site:
+  id: ""                # 如 site-b
+  name: ""
+  region: CN
+
+# 看板鉴权
+auth:
+  required: "1"
+  secretName: pdm-dashboard-auth
+  # 边缘用独立 Secret
+  edgeSecretName: pdm-edge-auth
+
+# 资源
+resources:
+  requests: {cpu: 200m, memory: 512Mi}
+  limits: {cpu: "2", memory: 2Gi}
+
+# 自动扩缩（边缘关闭）
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+# 边缘持久化
+persistence:
+  enabled: false
+  size: 5Gi
+  storageClass: ""
+
+# 对外暴露
+service:
+  type: ClusterIP
+  port: 8000
+ingress:
+  enabled: true
+  className: nginx
+  host: pdm-api.10.167.2.175.nip.io
+  path: /pdm-api
+  nodePort: 32233       # 边缘用 NodePort 时生效
+
+# 运维 CronJob
+cronjobs:
+  alertSync:
+    enabled: true
+    schedule: "*/10 * * * *"
+    tenants: "site-a"
+  rulRefresh:
+    enabled: true
+    schedule: "7 * * * *"
+  batchDiagnose:
+    enabled: true
+    schedule: "*/15 * * * *"
+    tenants: "site-a"
+  edgeSync:             # 仅边缘
+    enabled: false
+    schedule: "*/10 * * * *"
+    centerUrl: ""
+
+# 可观测
+observability:
+  otlpEndpoint: ""      # 留空 = 进程内环形缓冲
+  prometheusScrape: true
+
+# 上游中心（边缘摘要上行）
+center:
+  url: ""

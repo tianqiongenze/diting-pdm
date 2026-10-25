@@ -509,3 +509,104 @@ CREATE TABLE IF NOT EXISTS read_edge_summary (
   reported_at  DATETIME NOT NULL,
   PRIMARY KEY (site_id)
 );
+
+-- 18. Hermes 三层记忆 + 受控技能（Phase B，docs/12 红线）---------------------
+CREATE TABLE IF NOT EXISTS agent_session (
+  tenant_id    TEXT NOT NULL,
+  session_id   TEXT NOT NULL,
+  summary_json TEXT NOT NULL,                       -- JSON
+  turns        INTEGER NOT NULL DEFAULT 0,
+  updated_at   DATETIME NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (tenant_id, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS skill_registry (
+  tenant_id      TEXT NOT NULL,
+  skill_id       TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  body           TEXT NOT NULL,
+  version        INTEGER NOT NULL DEFAULT 1,
+  status         TEXT NOT NULL DEFAULT 'PENDING',   -- PENDING/APPROVED/REJECTED/SUPERSEDED
+  source_case_id TEXT,
+  proposed_by    TEXT NOT NULL DEFAULT 'agent',
+  approved_by    TEXT,
+  created_at     DATETIME NOT NULL DEFAULT (datetime('now')),
+  updated_at     DATETIME NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (tenant_id, skill_id)
+);
+CREATE INDEX IF NOT EXISTS idx_skill_status ON skill_registry(tenant_id, status, updated_at);
+
+CREATE TABLE IF NOT EXISTS memory_freeze (
+  tenant_id     TEXT NOT NULL,
+  freeze_id     TEXT NOT NULL,
+  note          TEXT,
+  snapshot_json TEXT NOT NULL,                      -- JSON
+  created_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (tenant_id, freeze_id)
+);
+
+-- 19. A2A 任务协作 + 供应商质量上报（Phase E，FR-907）-------------------------
+CREATE TABLE IF NOT EXISTS a2a_task (
+  tenant_id    TEXT NOT NULL,
+  task_id      TEXT NOT NULL,
+  task_type    TEXT NOT NULL,                       -- diagnose_request/quality_report/alert_escalation
+  state        TEXT NOT NULL DEFAULT 'SUBMITTED',  -- SUBMITTED/WORKING/COMPLETED/FAILED/CANCELED
+  requester    TEXT NOT NULL DEFAULT 'anonymous',
+  payload_json TEXT NOT NULL,                       -- JSON
+  result_json  TEXT,                                -- JSON
+  error        TEXT,
+  created_at   DATETIME NOT NULL DEFAULT (datetime('now')),
+  updated_at   DATETIME NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (tenant_id, task_id)
+);
+CREATE INDEX IF NOT EXISTS idx_a2a_state ON a2a_task(tenant_id, state, created_at);
+
+CREATE TABLE IF NOT EXISTS quality_report (
+  tenant_id     TEXT NOT NULL,
+  report_id     TEXT NOT NULL,
+  batch_no      TEXT,
+  supplier_code TEXT,
+  asset_id      TEXT,
+  abnormal_type TEXT,
+  detail        TEXT,                               -- JSON
+  reporter      TEXT,
+  sqe_notified  INTEGER NOT NULL DEFAULT 0,
+  created_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (tenant_id, report_id)
+);
+CREATE INDEX IF NOT EXISTS idx_qr_batch ON quality_report(tenant_id, batch_no);
+CREATE INDEX IF NOT EXISTS idx_qr_supplier ON quality_report(tenant_id, supplier_code, created_at);
+
+-- 20. 模型治理：注册表 + 预测反馈闭环（Phase F）--------------------------------
+CREATE TABLE IF NOT EXISTS model_version (
+  tenant_id    TEXT NOT NULL,
+  model_id     TEXT NOT NULL,
+  model_kind   TEXT NOT NULL DEFAULT 'rules',       -- rules/world_model/llm
+  description  TEXT,
+  feature_set  TEXT,
+  metrics_json TEXT,                                -- JSON
+  status       TEXT NOT NULL DEFAULT 'ACTIVE',      -- ACTIVE/DEPRECATED
+  created_by   TEXT NOT NULL DEFAULT 'system',
+  created_at   DATETIME NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (tenant_id, model_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mv_kind ON model_version(tenant_id, model_kind, status);
+
+CREATE TABLE IF NOT EXISTS prediction_feedback (
+  tenant_id       TEXT NOT NULL,
+  feedback_id     TEXT NOT NULL,
+  asset_id        TEXT NOT NULL,
+  diag_id         TEXT,
+  card_id         TEXT,
+  model_id        TEXT NOT NULL,
+  predicted_level TEXT NOT NULL,                    -- red/orange/yellow/green
+  actual_outcome  TEXT NOT NULL,                    -- CONFIRMED_FAILURE/FALSE_ALARM/NO_EVENT
+  predicted_hi    REAL,
+  actual_hi       REAL,
+  note            TEXT,
+  closed_by       TEXT,
+  created_at      DATETIME NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (tenant_id, feedback_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pf_model ON prediction_feedback(tenant_id, model_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_pf_asset ON prediction_feedback(tenant_id, asset_id, created_at);

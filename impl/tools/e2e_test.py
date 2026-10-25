@@ -245,11 +245,27 @@ class E2E:
                                     headers=h).json()
 
         r = rpc("initialize")
-        check("T8.1 initialize", r.get("result", {}).get("protocolVersion") == "2024-11-05")
-        r = rpc("tools/list")
-        tools = [t["name"] for t in r["result"]["tools"]]
-        check("T8.2 工具数量 5", len(tools) == 5, str(tools))
-        check("T8.3 工具含 inputSchema", all("inputSchema" in t for t in r["result"]["tools"]))
+        # Phase D：协议升级至 2025-03-26，能力含 resources/prompts
+        init = r.get("result", {})
+        check("T8.1 initialize", init.get("protocolVersion") == "2025-03-26",
+              str(init.get("protocolVersion")))
+        check("T8.1b 能力声明齐备",
+              set(init.get("capabilities", {})) >= {"tools", "resources", "prompts"},
+              str(sorted(init.get("capabilities", {}))))
+        tl = rpc("tools/list")
+        tool_specs = tl["result"]["tools"]
+        tools = [t["name"] for t in tool_specs]
+        # Phase A/D：工具注册表扩至 12 个（与 Harness 同源）
+        check("T8.2 工具数量 12", len(tools) == 12, str(tools))
+        check("T8.3 工具含 inputSchema", all("inputSchema" in t for t in tool_specs))
+        check("T8.3b 工具含副作用分级",
+              all(t.get("sideEffect") in ("read", "write", "critical") for t in tool_specs))
+        rl = rpc("resources/list")
+        check("T8.2b resources 可列", len(rl["result"]["resources"]) >= 3,
+              str(len(rl.get("result", {}).get("resources", []))))
+        pl = rpc("prompts/list")
+        check("T8.2c prompts 可列", len(pl["result"]["prompts"]) >= 2,
+              str(len(pl.get("result", {}).get("prompts", []))))
 
         r = rpc("tools/call", {"name": "assess_health", "arguments": {"asset_id": self.sample_asset["asset_id"]}})
         txt = r["result"]["content"][0]["text"]

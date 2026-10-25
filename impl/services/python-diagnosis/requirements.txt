@@ -20,3 +20,8 @@ httpx>=0.27,<1.0
 # multidict 7.2.0 与 litestar 2.25 的 Headers 构造不兼容（CIMultiDict ABI 变化，
 # debug 时抛 TypeError: ctor requires CIMultiDict），0.9.14 用的是 7.1.0，钉住
 multidict>=7.1,<7.2
+
+# pulsar-client：事件总线主传输（缺失时 events.init 静默降级到 Redis——
+# 0.9.20 纯净构建暴露该缺陷：消费者跑旧镜像自带 pulsar，API 新镜像没有，
+# 导致 /events/stats 报 transport=redis，与"Pulsar 已打通"的结论不符）
+pulsar-client>=3.5,<4.0

@@ -207,14 +207,35 @@ class TestMcp:
         r = mcp.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize"}, "site-a")
         assert r["result"]["protocolVersion"]
         assert r["result"]["serverInfo"]["name"] == "diting-pdm"
+        # Phase D：capabilities 声明 resources 与 prompts
+        caps = r["result"]["capabilities"]
+        assert "resources" in caps and "prompts" in caps and "tools" in caps
 
-    def test_tools_list_has_five(self):
+    def test_tools_list_count(self):
+        """Phase D：MCP 工具与 Harness 注册表同源（12 个）。"""
         r = mcp.handle_rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, "site-a")
         names = [t["name"] for t in r["result"]["tools"]]
-        assert len(names) == 5
-        assert "consult_maintenance" in names
+        assert len(names) == 12
+        assert "consult_maintenance" in names and "ack_alert" in names
         for t in r["result"]["tools"]:
             assert "inputSchema" in t and t["inputSchema"]["type"] == "object"
+            assert t["sideEffect"] in ("read", "write", "critical")
+
+    def test_resources_list_and_read(self):
+        """Phase D2：resources 只读暴露。"""
+        r = mcp.handle_rpc({"jsonrpc": "2.0", "id": 6, "method": "resources/list"}, "site-a")
+        uris = [x["uri"] for x in r["result"]["resources"]]
+        assert "pdm://alert-rules/current" in uris
+        r2 = mcp.handle_rpc(
+            {"jsonrpc": "2.0", "id": 7, "method": "resources/read",
+             "params": {"uri": "pdm://alert-rules/current"}}, "site-a")
+        assert "contents" in r2["result"]
+
+    def test_prompts_list_and_get(self):
+        """Phase D2：受控提示模板。"""
+        r = mcp.handle_rpc({"jsonrpc": "2.0", "id": 8, "method": "prompts/list"}, "site-a")
+        names = [p["name"] for p in r["result"]["prompts"]]
+        assert "maintenance_consult" in names and "alert_triage" in names
 
     def test_missing_tenant_denied(self):
         r = mcp.handle_rpc(

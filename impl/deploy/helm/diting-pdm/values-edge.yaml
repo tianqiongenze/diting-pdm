@@ -1,0 +1,35 @@
+# 边缘站点覆盖值（单节点 K3s + SQLite）
+# 用法：helm install pdm-site-b ./diting-pdm -f values-edge.yaml \
+#         --set site.id=site-b --set site.name=天津零部件基地 --set center.url=http://...
+mode: edge
+replicaCount: 1
+
+database:
+  backend: sqlite
+  sqlitePath: /app/data/pdm_edge.db
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {cpu: "1", memory: 1Gi}
+
+autoscaling:
+  enabled: false
+
+persistence:
+  enabled: true
+  size: 5Gi
+
+service:
+  type: NodePort
+
+ingress:
+  enabled: false
+
+cronjobs:
+  alertSync: {enabled: true, schedule: "*/10 * * * *"}
+  rulRefresh: {enabled: true, schedule: "7 * * * *"}
+  batchDiagnose: {enabled: true, schedule: "*/15 * * * *"}
+  edgeSync:
+    enabled: true
+    schedule: "*/10 * * * *"
+    centerUrl: ""      # --set center.url 覆盖

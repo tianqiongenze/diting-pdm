@@ -32,18 +32,24 @@
 
 ## 2. Harness 十组件 → 本项目落地
 
-| # | 组件 | 本项目实现 | 关键设计点 |
+> **2026-10-25 诚信修正（v1.1）**：本表原列名为"本项目实现"，经代码核查（grep 验证），
+> LoopController / Sandbox / PermissionGate / Hooks / Observability / Eval Loop 六个组件
+> 此前**并不存在于代码中**——那是设计意图而非实现现状。现改名"实现状态"并逐行标注。
+> Phase A（docs/43 §十二）已补齐 loop/tools/gate/hooks/sandbox/otel/eval 七个模块，
+> 对应行状态随之更新。
+
+| # | 组件 | 实现状态 | 关键设计点 |
 |---|---|---|---|
-| 1 | **Agentic Loop** | `LoopController`（显式状态机，非 while(true)） | 状态：`IDLE→PLAN→ACT→OBSERVE→VERIFY→DONE/ESCALATE`，每态有超时 |
-| 2 | **Tool Registry** | 12 个精准工具（§5） | 宁少勿多；每个工具有 JSON Schema + 前置条件 + 副作用声明 |
-| 3 | **Sandbox** | `SandboxExecutor`（只读挂载 + CPU/内存限额 + 无网络） | DSP 计算在沙箱跑，防"Agent 写脚本把库删了" |
-| 4 | **Permission Model** | `PermissionGate`（allow/ask/deny 三级） | **所有写操作 = ask**；金额/停机超阈值 = 双人复核 |
-| 5 | **Memory / Context** | 三层记忆（§6） | 设备档案静态注入；会话滚动摘要；情节日志 FTS 检索 |
-| 6 | **Hooks** | pre-tool / post-tool / stop 三类 | **Stop Hook 是防"假完成"的关键**（§7） |
-| 7 | **Sub-agents** | 四角色并行 fan-out + 独立 Evaluator | 每个子 Agent 独立上下文，只拿自己授权数据 |
-| 8 | **System Prompt & Skills** | 技能包渐进披露（§8） | 提示词每行都要能追溯到一次真实失败（棘轮原则） |
-| 9 | **Observability** | OTel：每次工具调用一个 span | 记录 token/时延/成本/命中缓存 |
-| 10 | **Eval Loop** | 离线回放 + 在线抽样 + 独立评分 | Planner/Generator/Evaluator 三分离 |
+| 1 | **Agentic Loop** | ✅ 已实现（Phase A1，`app/harness/loop.py`） | 状态：`IDLE→CLAN→PLAN→GATE→ACT→OBSERVE→VERIFY→DONE/ESCALATE`，每态有超时；max_turns=8 |
+| 2 | **Tool Registry** | ✅ 已实现（Phase A2，`app/harness/tools.py`，12 工具） | 宁少勿多；每个工具有 JSON Schema + 前置条件 + 副作用声明；与 MCP 同源 |
+| 3 | **Sandbox** | ✅ 已实现（Phase A5，`app/harness/sandbox.py`） | Linux 子进程 + rlimit；其他平台线程看门狗；只跑 `pdm_signal` 纯函数 |
+| 4 | **Permission Model** | ✅ 已实现（Phase A3，`app/harness/gate.py`） | allow/ask/deny 三级；**所有写操作 = ask**；金额/停机超 ¥5 万 = 双人复核 |
+| 5 | **Memory / Context** | 🔨 Phase B（`app/memory/`，三层记忆 + FTS） | 设备档案静态注入；会话滚动摘要；情节日志全文检索 |
+| 6 | **Hooks** | ✅ 已实现（Phase A4，`app/harness/hooks.py`） | pre-tool / post-tool / stop 三类；**Stop Hook 是防"假完成"的关键**（§7） |
+| 7 | **Sub-agents** | ✅ 已实现（`app/decision.py` 四角色 + 独立 Evaluator） | 每个子 Agent 独立上下文，只拿自己授权数据 |
+| 8 | **System Prompt & Skills** | 🔨 Phase B（`app/memory/skills.py`，人工审批后生效） | 技能包渐进披露；提示词每行都要能追溯到一次真实失败（棘轮原则） |
+| 9 | **Observability** | ✅ 已实现（Phase A6，`app/harness/otel.py`） | OTel GenAI 语义约定三层 span（invoke_agent/chat/execute_tool）；OTLP 可选导出 |
+| 10 | **Eval Loop** | ✅ 已实现（Phase A7，`app/harness/eval.py`） | 离线回放（golden cases）+ 在线抽样 + Planner/Generator/Evaluator 三分离 |
 
 ---
 

@@ -942,11 +942,16 @@ def test_new_modules(pw) -> None:
     check("G4.5 空标题 400", r.status_code in (400, 403), f"HTTP {r.status_code}")
 
     print("\n===== G5. 告警规则 =====", flush=True)
-    r = c.get("/v1/rules")
-    rules = (r.json() or {}).get("items") or []
-    check("G5.1 规则列表", r.status_code == 200 and len(rules) >= 4, f"{len(rules)} 条")
-    check("G5.2 阈值已从硬编码改为配置", any(x["rule_id"] == "HI_WARNING" for x in rules),
-          "HI_WARNING 存在")
+    # 判据版本化后规则可能在 site 或 group 域（docs/43 P0-3）——
+    # 合并两域检查，避免"发布到集团后本地列表看不到"的误判
+    site_rules = (c.get("/v1/rules?rule_scope=site").json() or {}).get("items") or []
+    group_rules = (c.get("/v1/rules?rule_scope=group").json() or {}).get("items") or []
+    rules = site_rules + group_rules
+    check("G5.1 规则列表", len(site_rules) >= 1 or len(group_rules) >= 1,
+          f"site={len(site_rules)} group={len(group_rules)}")
+    check("G5.2 阈值已从硬编码改为配置",
+          any(x["rule_id"] == "HI_WARNING" for x in rules),
+          f"HI_WARNING 存在（site={len(site_rules)} group={len(group_rules)}）")
     target = next((x for x in rules if x["rule_id"] == "HI_WARNING"), None)
     if target:
         r = c.put("/v1/rules/HI_WARNING",

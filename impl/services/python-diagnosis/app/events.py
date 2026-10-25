@@ -99,16 +99,22 @@ class PulsarTransport:
 
 _transport: Transport = NullTransport()
 _lock = threading.Lock()
-stats = {"emitted": 0, "failures": 0, "last_error": None}
+stats = {"emitted": 0, "failures": 0, "last_error": None,
+         "transport_degraded": False}
 
 
 def init(url: str | None = None) -> bool:
     """初始化传输层。优先级：pulsar > redis > null。
 
     失败时逐级降级，保证服务可用性优先于事件送达。
+    **降级必须显式可见**（宪法 4.2）：若从 pulsar 降级到 redis，
+    last_error 保留 pulsar 的失败原因，并以 transport_degraded 标记，
+    避免"看起来正常、实际换了总线"的静默降级。
     """
     global _transport
     mode = os.getenv("PDM_EVENT_TRANSPORT", "pulsar").lower()
+    stats["transport_degraded"] = False
+    pulsar_error = None
 
     if mode == "pulsar":
         try:
@@ -116,13 +122,19 @@ def init(url: str | None = None) -> bool:
             stats["last_error"] = None
             return True
         except Exception as exc:  # noqa: BLE001
-            stats["last_error"] = f"pulsar init failed, falling back to redis: {exc}"
+            pulsar_error = f"pulsar init failed: {exc}"
+            stats["last_error"] = pulsar_error
 
     url = url or os.getenv("PDM_REDIS_URL")
     if url:
         try:
             _transport = RedisStreamTransport(url)
-            stats["last_error"] = None
+            if pulsar_error:
+                # 降级：保留 pulsar 失败原因，标记 degraded（不掩盖）
+                stats["last_error"] = f"{pulsar_error} → fell back to redis"
+                stats["transport_degraded"] = True
+            else:
+                stats["last_error"] = None
             return True
         except Exception as exc:  # noqa: BLE001
             stats["last_error"] = f"init failed: {exc}"

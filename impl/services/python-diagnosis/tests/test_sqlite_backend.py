@@ -31,10 +31,19 @@ SQLITE_PATH = os.getenv("PDM_SQLITE_PATH", "/tmp/pdm_smoke.db")
 SCHEMA = os.path.join(os.path.dirname(__file__), "..", "..", "..",
                       "db", "sqlite", "001_schema.sql")
 
+_SAVED_ENV = {k: os.environ.get(k) for k in ("PDM_DB_BACKEND", "PDM_SQLITE_PATH")}
+
 
 @pytest.fixture(scope="module")
 def db():
-    """模块级：建库 + 灌入最小数据集。"""
+    """模块级：建库 + 灌入最小数据集。
+
+    隔离策略：设 env 后仅 importlib.reload(app.repository)（DB_BACKEND 在
+    模块加载时求值）。刻意不删 sys.modules 里的 app 模块——那会破坏
+    同进程其他测试文件已绑定的 app.server.app 引用（污染事故教训）。
+    """
+    import importlib
+
     os.environ["PDM_DB_BACKEND"] = "sqlite"
     os.environ["PDM_SQLITE_PATH"] = SQLITE_PATH
     # 清掉旧库，保证可重复运行
@@ -44,10 +53,8 @@ def db():
             p.unlink()
     pathlib.Path(os.path.dirname(SQLITE_PATH)).mkdir(parents=True, exist_ok=True)
 
-    # import 必须在环境变量之后（DB_BACKEND 在模块加载时求值）
-    for mod in [m for m in list(sys.modules) if m.startswith("app")]:
-        del sys.modules[mod]
     from app import repository  # noqa: PLC0415
+    importlib.reload(repository)
 
     assert repository.DB_BACKEND == "sqlite", "必须在 sqlite 后端下运行"
     with open(SCHEMA, encoding="utf-8") as fh:
@@ -114,7 +121,15 @@ def db():
             "INSERT INTO read_asset_health_history(tenant_id,asset_id,hi,level,ts) "
             "VALUES (%s,%s,%s,%s,%s)",
             ("site-b", "WELD-0002", 6.0, "red", now))
-    return repository
+    yield repository
+    # 收尾：还原 env 并 reload 回 mysql 路径（防污染其他测试文件）
+    import importlib
+    for k, v in _SAVED_ENV.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    importlib.reload(repository)
 
 
 def test_diagnose_and_read_model(db):

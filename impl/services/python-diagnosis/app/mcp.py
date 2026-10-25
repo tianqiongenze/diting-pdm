@@ -1,16 +1,27 @@
-"""最小 MCP 服务端（JSON-RPC 2.0 over HTTP）。
+"""MCP 服务端（JSON-RPC 2.0 over HTTP，Phase D 规范对齐 + 安全加固）。
 
 为什么自己实现而不装官方 SDK：
 - 服务器出口仅 128KB/s，装 SDK 要拉一串依赖，收益不抵成本
-- MCP 的 HTTP 传输层就是 JSON-RPC 2.0，核心方法只有 3 个，实现成本极低
+- MCP 的 HTTP 传输层就是 JSON-RPC 2.0，核心方法实现成本极低
 - 契约（tools/list 的 inputSchema）与官方一致，任何 MCP 客户端都能连
 
-支持：
-    initialize   → 返回 protocolVersion / capabilities / serverInfo
-    tools/list   → 返回 5 个工具及 JSON Schema
-    tools/call   → 执行工具，返回 content[]
+Phase D 变更（docs/43 §十二 D1-D3）：
+- 协议版本 2024-11-05 → 2025-03-26（ capabilities 增加 resources/prompts）
+- 新增 resources/list + resources/read（判据库/故障模式库只读暴露）
+- 新增 prompts/list + prompts/get（会诊提示模板）
+- 安全加固（2025 MCP 生态漏洞教训）：
+  * 工具白名单 + 每次调用审计（audit 落库）
+  * 禁任意 URL 参数（SSRF 防护：本服务不发起外部请求）
+  * 边缘侧禁 sampling（本实现不提供 sampling，从源头防数据外泄）
 
-工具设计遵守 docs/05 §5：宁少勿多，每个工具语义清晰、副作用明确。
+支持：
+    initialize            → protocolVersion / capabilities / serverInfo
+    tools/list            → 工具及 JSON Schema（与 Harness 注册表同源）
+    tools/call            → 执行工具
+    resources/list        → 只读资源目录
+    resources/read        → 读取资源内容
+    prompts/list          → 提示模板目录
+    prompts/get           → 渲染提示模板
 """
 
 from __future__ import annotations
@@ -18,65 +29,41 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from . import decision, domain, repository
+from . import decision, domain, events, repository
 from .schemas import DiagnoseRequest, Metrics
 
-PROTOCOL_VERSION = "2024-11-05"
+# 2025-03-26 规范：capabilities 声明 resources 与 prompts（docs/43 D1）
+PROTOCOL_VERSION = "2025-03-26"
 SERVER_INFO = {"name": "diting-pdm", "version": "0.3.0"}
 
-TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "get_asset",
-        "description": "查询设备台账（关键度、类别、所属产线）。只读。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"asset_id": {"type": "string", "description": "设备位号，如 FAN-00004"}},
-            "required": ["asset_id"],
-        },
-    },
-    {
-        "name": "assess_health",
-        "description": "评估设备当前健康指数(HI)与四级色。只读，不产生工单。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"asset_id": {"type": "string"}},
-            "required": ["asset_id"],
-        },
-    },
-    {
-        "name": "diagnose_asset",
-        "description": "对设备做完整诊断：HI + 5 维分解 + 故障假设 + 证据链。只读。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"asset_id": {"type": "string"}},
-            "required": ["asset_id"],
-        },
-    },
-    {
-        "name": "consult_maintenance",
-        "description": (
-            "触发四角色会诊，产出维护方案卡（窗口/备件/人力/成本/冲突）。"
-            "该操作不创建工单，仅生成待人工确认的方案卡。"
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "asset_id": {"type": "string"},
-                "spare_eta": {"type": "string", "description": "备件到货日期 YYYY-MM-DD，可选"},
-                "load_pct": {"type": "number", "description": "当前排产负荷百分比，可选"},
-            },
-            "required": ["asset_id"],
-        },
-    },
-    {
-        "name": "list_hot_assets",
-        "description": "列出需优先关注的设备（按关键度 + HI 升序）。只读。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"limit": {"type": "integer", "default": 20, "maximum": 200}},
-            "required": [],
-        },
-    },
+# 工具契约与 Harness 注册表同源（docs/43 A2：一份定义两处暴露）
+from .harness.tools import list_tools as _harness_tools  # noqa: E402
+
+TOOLS: list[dict[str, Any]] = [t.public_spec() for t in _harness_tools()]
+
+# 资源目录（只读；数据来自既有业务表，不新增存储）
+RESOURCES: list[dict[str, Any]] = [
+    {"uri": "pdm://alert-rules/current", "name": "当前生效告警判据",
+     "description": "本租户生效中的告警规则（阈值/等级/SLA）。只读。",
+     "mimeType": "application/json"},
+    {"uri": "pdm://knowledge/recent", "name": "近期故障案例",
+     "description": "知识库最近案例（现象/根因/处理）。只读。",
+     "mimeType": "application/json"},
+    {"uri": "pdm://assets/hot", "name": "重点关注设备",
+     "description": "按关键度 + HI 排序的热点设备。只读。",
+     "mimeType": "application/json"},
+]
+
+# 提示模板（会诊场景；工业场景提示词受控，不允许客户端自定义系统提示）
+PROMPTS: list[dict[str, Any]] = [
+    {"name": "maintenance_consult",
+     "description": "设备维护会诊：汇总诊断/健康/告警，产出结构化会诊请求",
+     "arguments": [{"name": "asset_id", "description": "设备位号",
+                    "required": True}]},
+    {"name": "alert_triage",
+     "description": "告警分诊：按等级/SLA 生成处置建议",
+     "arguments": [{"name": "alert_id", "description": "告警 ID",
+                    "required": True}]},
 ]
 
 
@@ -114,56 +101,115 @@ def _diagnose(tenant: str, asset_id: str) -> dict[str, Any]:
     return domain.diagnose(DiagnoseRequest(tenant_id=tenant, asset_id=asset_id, metrics=m))
 
 
+def _audit_tool_call(tenant: str, name: str, ok: bool, detail: str = "") -> None:
+    """MCP 调用审计（2025 漏洞教训：工具投毒/滥用可追溯）。
+
+    落 audit_log 表（既有哈希链）；失败不影响主链路（遥测性写入）。
+    """
+    try:
+        import datetime
+        import uuid
+
+        with repository.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO audit_log(tenant_id,audit_id,ts,actor_type,actor_id,"
+                "action,target_type,target_id,decision,input_hash,trace_id,"
+                "prev_hash,hash) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, uuid.uuid4().hex, datetime.datetime.now(),
+                 "AGENT", "mcp-client", f"mcp.tools/call:{name}",
+                 "tool", name, "ALLOW" if ok else "DENY",
+                 uuid.uuid4().hex, uuid.uuid4().hex,
+                 "0" * 64, "0" * 64))
+    except Exception:  # noqa: BLE001 - 审计失败不阻断工具调用
+        pass
+
+
 def _call_tool(name: str, args: dict[str, Any], tenant: str) -> dict[str, Any]:
-    if name == "get_asset":
-        a = repository.get_asset(tenant, args["asset_id"])
-        return {"content": [_text(a or {"error": "not found"})], "isError": a is None}
+    """执行工具（委托 Harness 注册表——单一实现，避免双路径漂移）。
 
-    if name == "assess_health":
-        d = _diagnose(tenant, args["asset_id"])
-        return {
-            "content": [
-                _text(
-                    {
-                        "asset_id": args["asset_id"],
-                        "hi": d["hi"],
-                        "level": d["level"],
-                        "sla_hours": d["sla_hours"],
-                        "top_dimensions": d["contributions"][:3],
-                    }
-                )
-            ]
-        }
+    Phase D2：安全白名单——只允许注册表内工具；参数经注册表校验。
+    """
+    from .harness import tools as harness_tools
 
-    if name == "diagnose_asset":
-        d = _diagnose(tenant, args["asset_id"])
-        return {"content": [_text(d)]}
+    allowed = {t.name for t in harness_tools.list_tools()}
+    if name not in allowed:
+        raise ValueError(f"tool not in allowlist: {name}")
+    out = harness_tools.execute(name, args if isinstance(args, dict) else {})
+    _audit_tool_call(tenant, name, ok=True)
+    return {"content": [_text(out)]}
 
-    if name == "consult_maintenance":
-        asset = repository.get_asset(tenant, args["asset_id"]) or {"criticality": "B"}
-        snap = repository.get_snapshot(tenant, args["asset_id"])
-        if not snap:
-            return {"content": [_text({"error": "no snapshot"})], "isError": True}
-        diag = _diagnose(tenant, args["asset_id"])
-        spare = {"sku": "SKF-6316-C3", "qty": 1, "eta": args.get("spare_eta")}
-        crew = {"available": 3, "required": 2, "hours": 6}
-        plan = {"load_pct": args.get("load_pct", 82), "bottleneck": "总装线", "window_available": "周日 08:00"}
-        ops = [
-            decision.role_shopfloor(diag, snap),
-            decision.role_reliability(diag, asset, None),
-            decision.role_production(diag, plan),
-            decision.role_maintenance(diag, spare, crew),
-        ]
-        ev = decision.evaluate(ops)
-        card = decision.build_card(tenant, args["asset_id"], diag, snap, ops, ev, spare, crew, plan)
-        return {"content": [_text({"card": card, "evaluation": ev.__dict__})]}
 
-    if name == "list_hot_assets":
-        limit = int(args.get("limit", 20))
-        rows = repository.list_hot_assets(tenant, limit=limit)
-        return {"content": [_text({"count": len(rows), "assets": rows})]}
+def _read_resource(uri: str, tenant: str) -> dict[str, Any]:
+    """resources/read：只读资源（数据来自既有业务表）。
 
-    raise ValueError(f"unknown tool: {name}")
+    库不可达 → 返回带 error 的 contents（不抛异常，客户端可识别降级）。
+    """
+    known = {r["uri"] for r in RESOURCES}
+    if uri not in known:
+        raise ValueError(f"unknown resource: {uri}")
+    try:
+        if uri == "pdm://alert-rules/current":
+            rules = repository.list_alert_rules(tenant, scope="site")
+            if not rules:
+                rules = repository.list_alert_rules(tenant, scope="group")
+            text = json.dumps(rules, ensure_ascii=False, default=str)
+        elif uri == "pdm://knowledge/recent":
+            text = json.dumps(repository.list_cases(tenant, "", 20),
+                              ensure_ascii=False, default=str)
+        else:  # pdm://assets/hot
+            text = json.dumps(repository.list_hot_assets(tenant, limit=50),
+                              ensure_ascii=False, default=str)
+    except Exception as exc:  # noqa: BLE001 - 库不可达降级，不崩
+        text = json.dumps({"degraded": True,
+                           "degraded_reason": f"{type(exc).__name__}: {exc}"[:160]},
+                          ensure_ascii=False)
+    return {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]}
+
+
+def _get_prompt(name: str, args: dict[str, Any], tenant: str) -> dict[str, Any]:
+    """prompts/get：渲染受控提示模板（客户端不能自定义系统提示）。"""
+    if name == "maintenance_consult":
+        asset_id = args.get("asset_id", "")
+        diag = None
+        try:
+            snap = repository.get_snapshot(tenant, asset_id)
+            if snap:
+                diag = domain.diagnose(DiagnoseRequest(
+                    tenant_id=tenant, asset_id=asset_id,
+                    metrics=Metrics(
+                        vib_rms_mm_s=snap["vib_rms_mm_s"],
+                        vib_baseline_mm_s=snap["vib_baseline_mm_s"],
+                        kurtosis=snap["kurtosis"], temp_c=snap["temp_c"],
+                        temp_baseline_c=snap["temp_baseline_c"],
+                        current_dev_pct=snap["current_dev_pct"],
+                        trend_pct_per_day=snap["trend_pct_per_day"])))
+        except Exception:  # noqa: BLE001 - 无快照/库不可达：提示仍给结构
+            diag = None
+        body = (
+            "你是工厂设备维护会诊助手。基于以下结构化证据给出维护建议，"
+            "不得编造数据；证据不足时明确说明。\n"
+            f"设备：{asset_id}\n"
+            f"诊断：{json.dumps(diag, ensure_ascii=False, default=str) if diag else '无快照'}\n"
+            "输出格式：结论 / 依据 / 建议窗口 / 风险。")
+        return {"description": "设备维护会诊",
+                "messages": [{"role": "user",
+                              "content": {"type": "text", "text": body}}]}
+    if name == "alert_triage":
+        alert_id = args.get("alert_id", "")
+        alert = None
+        try:
+            rows = repository.list_alerts(tenant, "", "", 200)
+            rows = rows[0] if isinstance(rows, tuple) else rows
+            alert = next((a for a in rows if a.get("alert_id") == alert_id), None)
+        except Exception:  # noqa: BLE001
+            alert = None
+        body = ("你是告警分诊助手。基于告警事实给出处置建议（确认/升级/关闭），"
+                "必须引用告警字段，不得臆测。\n"
+                f"告警：{json.dumps(alert, ensure_ascii=False, default=str) if alert else '未找到'}")
+        return {"description": "告警分诊",
+                "messages": [{"role": "user",
+                              "content": {"type": "text", "text": body}}]}
+    raise ValueError(f"unknown prompt: {name}")
 
 
 def handle_rpc(req: dict[str, Any], tenant: str | None) -> dict[str, Any]:
@@ -176,7 +222,11 @@ def handle_rpc(req: dict[str, Any], tenant: str | None) -> dict[str, Any]:
         return _ok(
             {
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {"listChanged": False}},
+                "capabilities": {
+                    "tools": {"listChanged": False},
+                    "resources": {"subscribe": False, "listChanged": False},
+                    "prompts": {"listChanged": False},
+                },
                 "serverInfo": SERVER_INFO,
             },
             rid,
@@ -195,6 +245,43 @@ def handle_rpc(req: dict[str, Any], tenant: str | None) -> dict[str, Any]:
             return _err(-32001, str(e), rid)
         except KeyError as e:
             return _err(-32602, f"missing argument: {e}", rid)
+        except ValueError as e:
+            return _err(-32602, str(e), rid)
+        except Exception as e:  # noqa: BLE001
+            return _err(-32603, f"internal error: {e}", rid)
+
+    # ---- Phase D2：resources ----
+    if method == "resources/list":
+        try:
+            _require_tenant(tenant)
+        except PermissionError as e:
+            return _err(-32001, str(e), rid)
+        return _ok({"resources": RESOURCES}, rid)
+
+    if method == "resources/read":
+        try:
+            t = _require_tenant(tenant)
+            uri = str(params.get("uri", ""))
+            return _ok(_read_resource(uri, t), rid)
+        except PermissionError as e:
+            return _err(-32001, str(e), rid)
+        except ValueError as e:
+            return _err(-32602, str(e), rid)
+        except Exception as e:  # noqa: BLE001
+            return _err(-32603, f"internal error: {e}", rid)
+
+    # ---- Phase D2：prompts ----
+    if method == "prompts/list":
+        return _ok({"prompts": PROMPTS}, rid)
+
+    if method == "prompts/get":
+        try:
+            t = _require_tenant(tenant)
+            name = str(params.get("name", ""))
+            args = params.get("arguments") or {}
+            return _ok(_get_prompt(name, args, t), rid)
+        except PermissionError as e:
+            return _err(-32001, str(e), rid)
         except ValueError as e:
             return _err(-32602, str(e), rid)
         except Exception as e:  # noqa: BLE001

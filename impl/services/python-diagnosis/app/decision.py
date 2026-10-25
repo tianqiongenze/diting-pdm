@@ -191,6 +191,35 @@ def evaluate(opinions: list[RoleOpinion]) -> Evaluation:
 # ---------------------------------------------------------------------------
 # 方案卡
 # ---------------------------------------------------------------------------
+def _avoided_loss_with_world_model(
+    tenant_id: str, asset_id: str, diag: dict,
+    downtime_cost_per_hour: float,
+) -> tuple[float, str]:
+    """用世界模型反事实推演校准 avoided_loss（Phase C3）。
+
+    推演逻辑：不干预情景下预计 failure_day 天后 HI 跌破临界线
+    （= 非计划停机）。把"距跌破的天数"折算为停机风险暴露：
+      exposure = downtime_cost_per_hour × 8h × min(3, max(1, 30 / max(7, failure_day)))
+    即越临近跌破，避免损失越高（最多 3 次 8h，与旧口径上限一致）。
+    模型不可用 → 退回旧固定系数并标注 basis=fallback。
+    """
+    fallback = downtime_cost_per_hour * 8 * 3
+    try:
+        from .world import counterfactual
+        cf = counterfactual(tenant_id, asset_id, horizon_days=30,
+                            critical_hi=40.0, history_days=90)
+    except Exception:  # noqa: BLE001 - 世界模型不可用不阻塞会诊
+        return fallback, "fallback"
+    fail_day = cf.get("failure_day_estimate")
+    if cf.get("model") is None or fail_day is None:
+        return fallback, "fallback"
+    horizon = max(7, int(fail_day))
+    times = min(3, max(1, 30 // horizon))
+    avoided = downtime_cost_per_hour * 8 * times
+    return round(avoided, 2), (f"world_model(failure_day={fail_day},"
+                               f"slope={cf['model']['slope_per_day']})")
+
+
 def build_card(
     tenant_id: str,
     asset_id: str,
@@ -262,7 +291,13 @@ def build_card(
         opt_b["risk"] = "高（调拨溢价 35%，且需插单）"
         options.append(opt_b)
 
-    avoided = downtime_cost_per_hour * 8 * 3  # 假设避免 3 次 8 小时非计划停机
+    # avoided_loss 的世界模型校准（Phase C3）：
+    # 旧实现是拍脑袋系数（downtime × 8h × 3 次）。现在优先用世界模型
+    # 反事实推演：不干预情景下预计 failure_day 天内跌破临界线，
+    # 按"跌破即非计划停机"折算避免损失；模型不可用（样本不足/无趋势）
+    # 才退回固定系数，并在卡片上标注依据（world_model_basis）。
+    avoided, wm_basis = _avoided_loss_with_world_model(
+        tenant_id, asset_id, diag, downtime_cost_per_hour)
     total_cost = min(o["cost"]["total"] for o in options)
     net = round(avoided - total_cost, 2)
 
@@ -296,6 +331,7 @@ def build_card(
             "total_cost": total_cost,
             "net_benefit": net,
             "currency": "CNY",
+            "avoided_loss_basis": wm_basis,
         },
         "conflicts": evaluation.conflicts,
         "evidence_gaps": evaluation.evidence_gaps,

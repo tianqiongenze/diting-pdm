@@ -1,0 +1,108 @@
+# =============================================================================
+# Prometheus 告警规则 · Diting PdM（docs/43 Phase G2）
+#
+# 覆盖 docs/43 §十二 G2 要求的四类告警：
+#   1. Pulsar 消费延迟
+#   2. 诊断覆盖率 < 95%
+#   3. 判据版本不一致（边缘与集团）
+#   4. 边缘断连
+#
+# 部署：kubectl -n monitoring create configmap pdm-alert-rules \
+#         --from-file=pdm-rules.yaml=impl/deploy/observability/prometheus-rules.yaml
+# =============================================================================
+groups:
+  - name: pdm-service
+    interval: 30s
+    rules:
+      # 服务不可用（5 分钟）
+      - alert: PdmServiceDown
+        expr: up{job="python-diagnosis"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: pdm
+        annotations:
+          summary: "PdM 诊断服务不可用"
+          description: "{{ $labels.instance }} 已 5 分钟无响应；先看 Pod 状态与 CrashLoopBackOff。"
+
+      # 诊断覆盖率不足（<95%）
+      - alert: PdmCoverageLow
+        expr: pdm_coverage_pct < 95
+        for: 15m
+        labels:
+          severity: warning
+          team: pdm
+        annotations:
+          summary: "诊断覆盖率 {{ $value }}% 低于 95%"
+          description: "检查 batch-diagnose CronJob 是否成功；覆盖率低意味着看板数字失真。"
+
+      # Pulsar 消费延迟堆积
+      - alert: PdmConsumerBacklog
+        expr: pdm_consumer_backlog > 1000
+        for: 10m
+        labels:
+          severity: warning
+          team: pdm
+        annotations:
+          summary: "消费积压 {{ $value }} 条"
+          description: "投影消费跟不上事件产生；检查 pulsar-consumer 副本与单批处理量。"
+
+      # 消费失败
+      - alert: PdmConsumerErrors
+        expr: increase(pdm_consumer_errors_total[10m]) > 5
+        labels:
+          severity: warning
+          team: pdm
+        annotations:
+          summary: "10 分钟内消费失败 {{ $value }} 次"
+          description: "看 consumer 日志；常见原因：表结构不一致（缺列）。"
+
+  - name: pdm-edge
+    interval: 60s
+    rules:
+      # 边缘断连（心跳超 30 分钟）
+      - alert: PdmEdgeOffline
+        expr: (time() - pdm_edge_heartbeat_timestamp_seconds) > 1800
+        for: 5m
+        labels:
+          severity: critical
+          team: pdm
+        annotations:
+          summary: "边缘站点 {{ $labels.site_id }} 断连超过 30 分钟"
+          description: "断网时边缘自治属正常；超 30 分钟需确认是否网络故障或节点宕机。"
+
+      # 判据版本不一致（边缘落后集团）
+      - alert: PdmRuleVersionDrift
+        expr: pdm_rule_version{scope="site"} != on(tenant_id, rule_id) group_left pdm_rule_version{scope="group"}
+        for: 24h
+        labels:
+          severity: warning
+          team: pdm
+        annotations:
+          summary: "判据 {{ $labels.rule_id }} 边缘与集团版本不一致超过 24h"
+          description: "FR-904 要求 24h 内生效；检查边缘 edge-sync CronJob 与集团发布记录。"
+
+  - name: pdm-quality
+    interval: 300s
+    rules:
+      # 模型漂移
+      - alert: PdmModelDrift
+        expr: pdm_model_drift_z > 2
+        for: 1h
+        labels:
+          severity: warning
+          team: pdm
+        annotations:
+          summary: "HI 分布漂移 z={{ $value }}"
+          description: "工况变化或模型失配；复核判据阈值并考虑模型迭代（docs/43 F2）。"
+
+      # 预测准确率下降
+      - alert: PdmPrecisionLow
+        expr: pdm_model_precision < 0.6
+        for: 24h
+        labels:
+          severity: warning
+          team: pdm
+        annotations:
+          summary: "模型精确率 {{ $value }} 低于 0.6"
+          description: "误报过多会消耗维修工信任；查看 prediction_feedback 明细定位原因。"

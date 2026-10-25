@@ -1,0 +1,53 @@
+# ArgoCD Application · 按基地灰度（docs/43 Phase H2 / NFR-205）
+#
+# 每个基地一个 Application，Helm values 独立——单基地失败不影响其他基地。
+# 灰度顺序：site-a（金丝雀）→ 验证 24h → 批量其余基地。
+#
+# 应用：kubectl apply -f impl/deploy/gitops/argocd-app-site-b.yaml
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pdm-site-b
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: diting-pdm
+    pdm.site: site-b
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: pdm
+  source:
+    repoURL: https://gitee.com/enze_tian_qiong/diting-pdm.git
+    targetRevision: main
+    path: impl/deploy/helm/diting-pdm
+    helm:
+      releaseName: pdm-site-b
+      valueFiles:
+        - values-edge.yaml
+      parameters:
+        - name: site.id
+          value: site-b
+        - name: site.name
+          value: 天津零部件基地
+        - name: center.url
+          value: http://pdm-api.10.167.2.175.nip.io:32231/pdm-api
+        - name: image.tag
+          value: "0.9.20"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pdm-edge
+  syncPolicy:
+    automated:
+      prune: false          # 不自动删除（防误删 PVC）
+      selfHeal: true        # 漂移自愈
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+  revisionHistoryLimit: 10

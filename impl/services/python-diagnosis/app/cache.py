@@ -81,7 +81,12 @@ class TTLCache:
 
 @dataclass
 class MultiLevelCache:
-    """L1 + L2 组合。L2 为 None 时自动单级运行。"""
+    """L1 + L2 组合。L2 为 None 时自动单级运行。
+
+    懒加载自愈（docs/43 §15.3 缺陷 5）：Pod 启动时 Redis 可能尚未就绪，
+    一次性判定会让该副本永久停留在 L1-only。这里在 L2 缺失时按冷却窗口
+    （默认 60s）重试建连——降级可恢复，而不是一次性判死。
+    """
 
     l1: TTLCache = field(default_factory=lambda: TTLCache(maxsize=8192, ttl=30.0))
     l2: Any | None = None  # redis.asyncio.Redis
@@ -89,6 +94,20 @@ class MultiLevelCache:
     l2_ttl: int = 120
     l2_hits: int = 0
     l2_errors: int = 0
+    l2_url: str | None = None
+    _l2_last_attempt: float = 0.0
+    l2_retry_cooldown: float = 60.0
+
+    async def _ensure_l2(self) -> None:
+        """L2 缺失时按冷却窗口尝试重建（自愈）。"""
+        if self.l2 is not None or not self.l2_url:
+            return
+        import time as _time
+        now = _time.time()
+        if now - self._l2_last_attempt < self.l2_retry_cooldown:
+            return
+        self._l2_last_attempt = now
+        self.l2 = await build_l2(self.l2_url, attempts=1)
 
     @staticmethod
     def make_key(payload: dict[str, Any]) -> str:
@@ -100,6 +119,7 @@ class MultiLevelCache:
         hit = self.l1.get(key)
         if hit is not None:
             return hit
+        await self._ensure_l2()
         if self.l2 is None:
             return None
         for attempt in range(2):  # 一次重试：抖动不应退化成重新计算
@@ -119,6 +139,7 @@ class MultiLevelCache:
 
     async def set(self, key: str, value: Any) -> None:
         self.l1.set(key, value)
+        await self._ensure_l2()
         if self.l2 is None:
             return
         try:
@@ -147,15 +168,27 @@ class MultiLevelCache:
         return s
 
 
-async def build_l2(url: str | None):
-    """尝试建立 Redis L2；失败返回 None（降级为单级缓存）。"""
+async def build_l2(url: str | None, attempts: int = 3):
+    """尝试建立 Redis L2；失败返回 None（降级为单级缓存）。
+
+    为什么重试：滚动更新时新 Pod 可能在 Redis 短暂繁忙/网络抖动期间启动，
+    单次 ping 失败会让该 Pod **永久**停留在 L1-only（实测 2 副本中 1 个
+    l2_enabled=False，/cache/stats 直接暴露）。降级应可恢复，而不是一次性判死。
+    """
     if not url:
         return None
-    try:
-        import redis.asyncio as aioredis
+    last_exc: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            import redis.asyncio as aioredis
 
-        client = aioredis.from_url(url, encoding="utf-8", decode_responses=True, socket_timeout=1.0, socket_connect_timeout=1.0)
-        await asyncio.wait_for(client.ping(), timeout=0.5)
-        return client
-    except Exception:  # noqa: BLE001
-        return None
+            client = aioredis.from_url(url, encoding="utf-8", decode_responses=True,
+                                       socket_timeout=1.0, socket_connect_timeout=1.0)
+            await asyncio.wait_for(client.ping(), timeout=1.0)
+            return client
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if i < attempts - 1:
+                await asyncio.sleep(0.5 * (i + 1))   # 0.5s / 1.0s 退避
+    print(f"[warn] L2 redis unavailable after {attempts} attempts: {last_exc}", flush=True)
+    return None

@@ -1,0 +1,118 @@
+{{- $t := .Values.cronjobs.alertSync.tenants | default .Values.site.id -}}
+{{- if .Values.cronjobs.alertSync.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: alert-sync
+  labels:
+    {{- include "pdm.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjobs.alertSync.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+          containers:
+            - name: sync
+              image: "{{ .Values.image.curlRepository }}:{{ .Values.image.curlTag }}"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  for T in {{ $t }}; do
+                    curl -fsS --max-time 60 -X POST http://python-diagnosis:8000/v1/alerts/sync \
+                      -H "Content-Type: application/json" -H "X-Tenant-Id: $T" \
+                      -d '{"threshold_hi":70}' || true
+                  done
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {cpu: 200m, memory: 128Mi}
+{{- end }}
+{{- if .Values.cronjobs.batchDiagnose.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: batch-diagnose
+  labels:
+    {{- include "pdm.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjobs.batchDiagnose.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 3600
+      activeDeadlineSeconds: 900
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+          containers:
+            - name: batch
+              image: "{{ .Values.image.curlRepository }}:{{ .Values.image.curlTag }}"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  for T in {{ .Values.cronjobs.batchDiagnose.tenants | default .Values.site.id }}; do
+                    curl -fsS --max-time 600 -X POST http://python-diagnosis:8000/v1/diagnose/batch \
+                      -H "Content-Type: application/json" -H "X-Tenant-Id: $T" \
+                      -d '{"limit":5000}' || true
+                  done
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {cpu: 200m, memory: 128Mi}
+{{- end }}
+{{- if and (eq .Values.mode "edge") .Values.cronjobs.edgeSync.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: edge-sync
+  labels:
+    {{- include "pdm.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjobs.edgeSync.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlAfterFinished: 1800
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+          containers:
+            - name: sync
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              env:
+                - {name: PDM_DB_BACKEND, value: sqlite}
+                - {name: PDM_SQLITE_PATH, value: "{{ .Values.database.sqlitePath }}"}
+                - {name: PDM_CENTER_URL, value: "{{ .Values.center.url }}"}
+                - {name: EDGE_VERSION, value: "{{ .Values.image.tag }}"}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  # 摘要上行（edge_sync.py 内部用 urllib，不依赖 curl；
+                  # 断网时自身降级 exit 0，下轮自动补报）
+                  python /app/tools/edge_sync.py --center "$PDM_CENTER_URL" \
+                    --tenant {{ .Values.site.id }} --name "{{ .Values.site.name }}" || true
+              volumeMounts:
+                - {name: data, mountPath: /app/data}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ .Release.Name }}-data
+{{- end }}
